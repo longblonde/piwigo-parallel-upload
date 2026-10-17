@@ -37,13 +37,14 @@ list($server_max, $server_max_why) = pu_server_max_chunk();
 list($buf_count, $buf_bytes) = pu_buffer_usage();
 
 $warnings = pu_limit_warnings($cfg);
-$fpm = pu_fpm_info();
-if ($fpm['max_children'] !== null && $fpm['max_children'] < pu_fpm_needed($cfg))
+$fpm = pu_server_workers();
+if ($fpm['limit'] !== null && $fpm['limit'] < pu_fpm_needed($cfg))
 {
+  $where = $fpm['source'] && strpos($fpm['source'], '/') === 0 ? preg_replace('/:\d+$/', '', $fpm['source']) : 'its configuration';
   $warnings[] = sprintf(
-    l10n('PHP-FPM pool "%s" allows only %d workers (pm.max_children), but %d parallel connections need about %d. Uploads will queue and other admin pages will stall. Raise pm.max_children to %d or more in %s and restart PHP-FPM, or lower Max parallel connections to %d.'),
-    $fpm['pool'], $fpm['max_children'], $cfg['concurrency'], pu_fpm_needed($cfg),
-    max(10, pu_fpm_needed($cfg)), preg_replace('/:\d+$/', '', $fpm['source']), max(1, $fpm['max_children'] - 2)
+    l10n('%s allows only %d PHP requests at once (%s), but %d parallel connections need about %d. Uploads will queue and other admin pages will stall. Raise %s to %d or more in %s and restart it, or lower Max parallel connections to %d.'),
+    $fpm['label'], $fpm['limit'], $fpm['setting'], $cfg['concurrency'], pu_fpm_needed($cfg),
+    $fpm['setting'], max(10, pu_fpm_needed($cfg)), $where, max(1, $fpm['limit'] - 2)
   );
 }
 

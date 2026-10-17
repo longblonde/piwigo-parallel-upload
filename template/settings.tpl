@@ -48,17 +48,17 @@
         <tr><th>max_execution_time</th><td>{$PU_INI.max_execution_time}</td>
             <th>memory_limit</th><td>{$PU_INI.memory_limit}</td></tr>
         <tr><th>{'Effective chunk'|translate}</th><td colspan="3">{($PU_CHUNK/1000000)|string_format:"%.1f"} MB ({'tightest limit'|translate}: {$PU_SERVER_WHY})</td></tr>
-        <tr><th>PHP-FPM</th><td colspan="3">
-          {if $PU_FPM.max_children}
-            {'pool'|translate} <b>{$PU_FPM.pool|default:'?'}</b> ·
-            pm = {$PU_FPM.pm|default:'dynamic'} ·
-            pm.max_children = <b class="{if $PU_FPM.max_children < $PU_FPM_NEEDED}pu-bad{else}pu-good{/if}">{$PU_FPM.max_children}</b>
+        <tr><th>{'PHP workers'|translate}</th><td colspan="3">
+          {if $PU_FPM.limit}
+            <b>{$PU_FPM.label}</b>
+            {if $PU_FPM.type == 'fpm'} · {'pool'|translate} <b>{$PU_FPM.pool|default:'?'}</b> · pm = {$PU_FPM.pm|default:'dynamic'}{/if}
+            {if $PU_FPM.type == 'apache' && $PU_FPM.mpm} · mpm_{$PU_FPM.mpm}{/if}
+            · {$PU_FPM.setting} = <b class="{if $PU_FPM.limit < $PU_FPM_NEEDED}pu-bad{else}pu-good{/if}">{$PU_FPM.limit}</b>
             ({'needs'|translate} {$PU_FPM_NEEDED} {'for'|translate} {$PU_CFG.concurrency} {'connections'|translate})
             {if $PU_FPM.running !== null} · {$PU_FPM.running} {'workers running now'|translate}{/if}
             <br><small class="pu-src">{$PU_FPM.source}</small>
           {else}
             <span class="pu-dim">{$PU_FPM.error}</span>
-            {if $PU_FPM.sapi == 'fpm-fcgi'}<br><small class="pu-src">grep -r max_children /etc/php/*/fpm/pool.d/</small>{/if}
           {/if}
         </td></tr>
         <tr><th>{'Buffer'|translate}</th><td colspan="3">{$PU_BUF_COUNT} {'partial uploads'|translate}, {($PU_BUF_BYTES/1048576)|string_format:"%.0f"} MB {'reserved'|translate}</td></tr>

@@ -202,6 +202,17 @@ EOF
       fi
     fi
   done
+  # PHP as an Apache module: each chunk occupies one Apache worker
+  for mpm in /etc/apache2/mods-enabled/mpm_*.conf; do
+    [ -f "$mpm" ] || continue
+    mrw=$(sed -nE 's/^\s*MaxRequestWorkers\s+([0-9]+).*/\1/p' "$mpm" | head -n 1)
+    [ -n "$mrw" ] || continue
+    if [ "$mrw" -lt 10 ]; then
+      c_warn "$mpm: MaxRequestWorkers = $mrw; raise it to 10+ for 8 parallel connections."
+    else
+      c_ok "Apache: MaxRequestWorkers = $mrw ($mpm)"
+    fi
+  done
   # FPM pool files can override conf.d with php_admin_value / php_value
   for pool in /etc/php/*/fpm/pool.d/*.conf /etc/php*/php-fpm.d/*.conf /usr/local/etc/php-fpm.d/*.conf; do
     [ -f "$pool" ] || continue

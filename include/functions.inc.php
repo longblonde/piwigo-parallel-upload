@@ -164,7 +164,7 @@ function pu_buffer_usage()
  *
  * @return array  sapi, pool, pm, max_children, source (file:line), running, conf, error
  */
-function pu_fpm_info()
+function pu_fpm_pool_info()
 {
   $info = array('sapi' => PHP_SAPI, 'pool' => null, 'pm' => null, 'max_children' => null,
                 'source' => null, 'running' => null, 'conf' => null, 'error' => null);
@@ -255,6 +255,119 @@ function pu_fpm_info()
     $info['running'] = $running;
   }
   return $info;
+}
+
+/**
+ * Apache with PHP as a module (apache2handler): every request, chunk uploads
+ * included, takes one Apache worker, capped by MaxRequestWorkers.
+ */
+function pu_apache_info()
+{
+  $info = array('mpm' => null, 'max_workers' => null, 'source' => null, 'running' => null, 'error' => null);
+
+  if (function_exists('apache_get_modules'))
+  {
+    foreach (apache_get_modules() as $m)
+    {
+      if (preg_match('/^(?:mod_)?mpm_(\w+)/', $m, $mm) || preg_match('/^(prefork|worker|event)(?:\.c)?$/', $m, $mm)) $info['mpm'] = $mm[1];
+    }
+  }
+
+  // Debian/Ubuntu layout first, then RHEL/Alpine
+  $files = array();
+  foreach (array('/etc/apache2', '/etc/httpd') as $base)
+  {
+    if (!@is_dir($base)) continue;
+    foreach (array('apache2.conf', 'httpd.conf', 'conf/httpd.conf') as $main) if (@is_file("$base/$main")) $files[] = "$base/$main";
+    foreach (array('mods-enabled/mpm_*.conf', 'conf.modules.d/*.conf', 'conf-enabled/*.conf', 'conf.d/*.conf', 'extra/httpd-mpm.conf') as $g)
+    {
+      foreach (glob("$base/$g") ?: array() as $x) $files[] = $x;
+    }
+  }
+  if (!$files)
+  {
+    $info['error'] = 'Apache configuration not readable'.(ini_get('open_basedir') ? ' (open_basedir is set)' : '');
+  }
+
+  // MaxRequestWorkers (MaxClients before 2.4) inside the active MPM's block, or at top level
+  foreach ($files as $file)
+  {
+    $block = null;
+    foreach (@file($file) ?: array() as $n => $line)
+    {
+      $line = trim($line);
+      if ($line === '' || $line[0] == '#') continue;
+      if (preg_match('/^<IfModule\s+!?\s*(?:mod_)?mpm_(\w+)(?:_module|\.c)?\s*>/i', $line, $m)) { $block = strtolower($m[1]); continue; }
+      if (preg_match('/^<IfModule\s+(prefork|worker|event)\.c\s*>/i', $line, $m)) { $block = strtolower($m[1]); continue; }
+      if (preg_match('#^</IfModule>#i', $line)) { $block = null; continue; }
+      if (preg_match('/^(MaxRequestWorkers|MaxClients)\s+(\d+)/i', $line, $m))
+      {
+        if ($block !== null && $info['mpm'] !== null && $block != $info['mpm']) continue;
+        if ($block !== null && $info['mpm'] === null) $info['mpm'] = $block;
+        $info['max_workers'] = (int)$m[2];
+        $info['source'] = $file.':'.($n + 1);
+        if ($info['mpm'] === null && preg_match('/mpm_(prefork|worker|event)\.conf$/', $file, $fm)) $info['mpm'] = $fm[1];
+      }
+    }
+  }
+  if ($info['max_workers'] === null && !$info['error'])
+  {
+    // compiled-in defaults
+    $info['max_workers'] = ($info['mpm'] == 'prefork' || $info['mpm'] === null) ? 256 : 400;
+    $info['source'] = 'Apache built-in default';
+  }
+
+  // child processes alive now (the root-owned parent isn't a worker)
+  $running = 0; $seen = false;
+  foreach (glob('/proc/[0-9]*', GLOB_ONLYDIR) ?: array() as $p)
+  {
+    $comm = trim((string)@file_get_contents($p.'/comm'));
+    if ($comm != 'apache2' && $comm != 'httpd') continue;
+    $seen = true;
+    if (@fileowner($p) !== 0) $running++;
+  }
+  if ($seen) $info['running'] = $running;
+  return $info;
+}
+
+/**
+ * How many PHP requests the web server can run at once, whatever the setup:
+ * PHP-FPM pool (pm.max_children) or Apache module (MaxRequestWorkers).
+ *
+ * @return array  type (fpm|apache|other), label, setting, limit, source, running,
+ *                pool, pm, mpm, sapi, error
+ */
+function pu_server_workers()
+{
+  $w = array('type' => 'other', 'label' => PHP_SAPI, 'setting' => null, 'limit' => null, 'source' => null,
+             'running' => null, 'pool' => null, 'pm' => null, 'mpm' => null, 'sapi' => PHP_SAPI, 'error' => null);
+
+  if (PHP_SAPI == 'fpm-fcgi')
+  {
+    $f = pu_fpm_pool_info();
+    return array_merge($w, array(
+      'type' => 'fpm', 'label' => 'PHP-FPM', 'setting' => 'pm.max_children',
+      'limit' => $f['max_children'], 'source' => $f['source'], 'running' => $f['running'],
+      'pool' => $f['pool'], 'pm' => $f['pm'], 'error' => $f['error'],
+    ));
+  }
+  if (PHP_SAPI == 'apache2handler')
+  {
+    $a = pu_apache_info();
+    return array_merge($w, array(
+      'type' => 'apache', 'label' => 'Apache (mod_php)', 'setting' => 'MaxRequestWorkers',
+      'limit' => $a['max_workers'], 'source' => $a['source'], 'running' => $a['running'],
+      'mpm' => $a['mpm'], 'error' => $a['error'],
+    ));
+  }
+  $w['error'] = 'Worker limit not detected for PHP SAPI "'.PHP_SAPI.'"';
+  return $w;
+}
+
+/** Back-compat name used by the pages. */
+function pu_fpm_info()
+{
+  return pu_server_workers();
 }
 
 /** Workers the plugin needs: one per parallel chunk, plus room for page loads and the finish step. */
