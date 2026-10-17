@@ -16,6 +16,8 @@ DO_PHP=1
 DO_WEB=1
 DO_ACTIVATE=1
 REPLACE_WEB_FORM=""       # "" = leave as is, 1 = on, 0 = off
+FORCE=0                   # reload services even while uploads are running
+WAIT_MIN=30               # how long to wait for running uploads before reloading
 PLUGIN_ID="ParallelUpload"
 
 usage() {
@@ -29,6 +31,9 @@ Usage: install.sh [options]
   --no-activate         copy files only; activate from Admin > Plugins yourself
   --replace-web-form    make Parallel Upload replace the core Web Form uploader
   --keep-web-form       turn that option off again
+  --wait MIN            wait up to MIN minutes for running uploads before
+                        reloading PHP / web server (default: $WAIT_MIN)
+  --force               reload right away even if uploads are running
   --ref REF             git branch / tag to install (default: $REF)
   --repo URL            git repository (default: $REPO_URL)
   -h, --help
@@ -45,6 +50,8 @@ while [ $# -gt 0 ]; do
     --replace-web-form) REPLACE_WEB_FORM=1; shift ;;
     --keep-web-form) REPLACE_WEB_FORM=0; shift ;;
     --ref) REF="$2"; shift 2 ;;
+    --wait) WAIT_MIN="$2"; shift 2 ;;
+    --force) FORCE=1; shift ;;
     --repo) REPO_URL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
@@ -163,7 +170,7 @@ if [ "$DO_PHP" -eq 1 ]; then
     up=$PHP_LIMIT_MB; post=$PHP_LIMIT_MB
     [ "$cur_up" -gt "$up" ] && up=$cur_up
     [ "$cur_post" -gt "$post" ] && post=$cur_post
-    cat > "$ini" <<EOF
+    cat > "$ini.new" <<EOF
 ; Written by Parallel Upload installer - request size for upload chunks.
 ; Only ever raises limits; delete this file to undo.
 upload_max_filesize = ${up}M
@@ -171,6 +178,12 @@ post_max_size = ${post}M
 max_execution_time = 300
 max_input_time = 300
 EOF
+    if cmp -s "$ini.new" "$ini"; then
+      rm -f "$ini.new"
+      c_ok "PHP: $ini already in place (upload_max_filesize=${up}M post_max_size=${post}M)"
+      continue
+    fi
+    mv -f "$ini.new" "$ini"
     c_ok "PHP: $ini (upload_max_filesize=${up}M post_max_size=${post}M)"
     [[ "$d" =~ /etc/php/([0-9.]+)/fpm/ ]] && RELOAD+=("php${BASH_REMATCH[1]}-fpm")
     [[ "$d" == */apache2/* ]] && RELOAD+=("apache2")
@@ -199,11 +212,13 @@ if [ "$DO_WEB" -eq 1 ]; then
     for v in $low; do
       b=$(to_bytes "$v"); [ "$b" -gt 0 ] && [ "$b" -lt $(( need * 1000000 )) ] && small="$small $v"
     done
-    if [ -d /etc/nginx/conf.d ]; then
-      cat > /etc/nginx/conf.d/parallel-upload.conf <<EOF
-# Written by Parallel Upload installer (http context). Delete to undo.
-client_max_body_size ${PHP_LIMIT_MB}m;
-EOF
+    NGX=/etc/nginx/conf.d/parallel-upload.conf
+    NGX_BODY="# Written by Parallel Upload installer (http context). Delete to undo.
+client_max_body_size ${PHP_LIMIT_MB}m;"
+    if [ -d /etc/nginx/conf.d ] && [ -f "$NGX" ] && [ "$(cat "$NGX")" = "$NGX_BODY" ]; then
+      c_ok "nginx: $NGX already in place"
+    elif [ -d /etc/nginx/conf.d ]; then
+      printf '%s\n' "$NGX_BODY" > "$NGX"
       if nginx -t >/dev/null 2>&1; then
         c_ok "nginx: client_max_body_size ${PHP_LIMIT_MB}m (/etc/nginx/conf.d/parallel-upload.conf)"
         RELOAD+=("nginx")
@@ -246,6 +261,37 @@ reload_svc() {
     esac
   fi
 }
+# A PHP-FPM reload kills requests that are mid-way through PHP (php-fpm's
+# default process_control_timeout is 0), e.g. the final step of an upload.
+# Wait until no upload has touched Piwigo's buffer for 2 minutes.
+uploads_active() {
+  local buf="$PIWIGO/upload/buffer"
+  [ -d "$buf" ] || return 1
+  [ -n "$(find "$buf" -type f ! -name 'index.*' ! -name '*.json' -mmin -2 -print -quit 2>/dev/null)" ] && return 0
+  # a Parallel Upload finish still registering a file
+  local d
+  for d in "$buf"/parallel/pu_*; do
+    [ -e "$d/finishing" ] && [ ! -e "$d/result.json" ] && \
+      [ -n "$(find "$d/finishing" -mmin -60 -print 2>/dev/null)" ] && return 0
+  done
+  return 1
+}
+SKIP_RELOAD=0
+if [ ${#RELOAD[@]} -gt 0 ] && [ "$FORCE" -eq 0 ] && uploads_active; then
+  c_warn "Uploads are in progress. Waiting for them to finish before reloading (up to $WAIT_MIN min; Ctrl-C to stop, --force to skip)."
+  deadline=$(( $(date +%s) + WAIT_MIN * 60 ))
+  while uploads_active; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then SKIP_RELOAD=1; break; fi
+    sleep 15
+  done
+  [ "$SKIP_RELOAD" -eq 0 ] && c_ok "Uploads idle"
+fi
+if [ "$SKIP_RELOAD" -eq 1 ]; then
+  c_warn "Uploads still running after $WAIT_MIN min; not reloading. New limits apply after: systemctl reload $(printf '%s\n' "${RELOAD[@]}" | sort -u | tr '\n' ' ')"
+  RELOAD=()
+fi
+[ ${#RELOAD[@]} -eq 0 ] && [ "$SKIP_RELOAD" -eq 0 ] && c_ok "No service reload needed"
+
 for s in $(printf '%s\n' "${RELOAD[@]}" | sort -u); do
   if reload_svc "$s"; then c_ok "Reloaded $s"; else c_warn "Could not reload $s - restart it yourself"; fi
 done

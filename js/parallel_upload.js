@@ -288,6 +288,14 @@
         const s = await ws('pu.upload.status', { upload_id: f.uploadId });
         if (s.state === 'done') return completeJob(f, s.result);
         if (s.state === 'error') return failJob(f, s.message);
+        if (s.state === 'interrupted') {
+          // the server process registering the file died (e.g. PHP-FPM restarted); run finish again
+          f.refinish = (f.refinish || 0) + 1;
+          if (!s.retryable || f.refinish > 3) return failJob(f, 'Server was restarted while registering this file');
+          f.state = 'uploading';
+          finishJob(f);
+          return;
+        }
         if (s.state === 'uploading') {
           // finish never got the lock (request dropped before reaching PHP): try again
           f.state = 'uploading';
@@ -687,9 +695,6 @@
   } catch (e) {}
   album.addEventListener('change', () => { try { localStorage.setItem('pu.album', album.value); } catch (e) {} render(true); });
 
-  document.querySelectorAll('.pu-toggle-settings').forEach((a) => a.addEventListener('click', (e) => {
-    e.preventDefault(); $('pu-settings').open = true; $('pu-settings').scrollIntoView({ behavior: 'smooth' });
-  }));
 
   setInterval(render, 250);
   render(true);

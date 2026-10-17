@@ -1,11 +1,11 @@
 <?php
 /*
 Plugin Name: Parallel Upload
-Version: 1.1.0
+Version: 1.2.0
 Description: Upload large files in parallel chunks sized to fit under a reverse-proxy request cap (Cloudflare Tunnel: 100 MB), with a live per-file / per-chunk progress dashboard and time remaining.
 Plugin URI: https://gray-think.com
 Author: Gray-Think (Daniel Wald)
-Has Settings: true
+Has Settings: webmaster
 */
 
 defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
@@ -21,7 +21,8 @@ if (basename(dirname(__FILE__)) != 'ParallelUpload')
 
 define('PU_ID',      'ParallelUpload');
 define('PU_PATH',    PHPWG_PLUGINS_PATH.PU_ID.'/');
-define('PU_ADMIN',   get_root_url().'admin.php?page=plugin-'.PU_ID);
+define('PU_SETTINGS_URL', get_root_url().'admin.php?page=plugin-'.PU_ID);           // webmaster only
+define('PU_UPLOAD_URL',   get_root_url().'admin.php?page=plugin-'.PU_ID.'-upload');  // any administrator
 
 include_once(PU_PATH.'include/functions.inc.php');
 
@@ -38,7 +39,7 @@ function pu_add_tab($sheets, $id)
     load_language('plugin.lang', PU_PATH);
     $tab = array(
       'caption' => '<span class="icon-upload"></span>'.l10n('Parallel Upload'),
-      'url' => PU_ADMIN,
+      'url' => PU_UPLOAD_URL,
     );
     $cfg = pu_get_config();
     if (!empty($cfg['replace_web_form']))
@@ -70,7 +71,7 @@ function pu_redirect_web_form()
   $cfg = pu_get_config();
   if (empty($cfg['replace_web_form'])) return;
 
-  $url = PU_ADMIN;
+  $url = PU_UPLOAD_URL;
   if (isset($_GET['album']) && ctype_digit((string)$_GET['album']))
   {
     $url .= '&album='.$_GET['album'];

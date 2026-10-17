@@ -213,7 +213,7 @@ function pu_ws_chunk($params, $service)
   if ($r instanceof PwgError) return $r;
   list($dir, $meta) = $r;
 
-  if (is_dir($dir.'/lock')) return new PwgError(409, 'Upload is already being finalized');
+  if (file_exists($dir.'/finishing')) return new PwgError(409, 'Upload is already being finalized');
 
   $index = (int)$params['index'];
   if ($index < 0 || $index >= $meta['chunks'])
@@ -309,22 +309,42 @@ function pu_ws_finish($params, $service)
     return pu_result_response($dir);
   }
 
+  // Finisher lock. flock() is released by the OS if this PHP worker dies
+  // (php-fpm reload/restart, OOM kill...), so a crashed finish can be re-run
+  // instead of leaving the upload stuck in "finishing".
+  $lf = @fopen($dir.'/finish.lock', 'c');
+  if (!$lf) return new PwgError(500, 'Unable to create finish lock');
+  if (!flock($lf, LOCK_EX | LOCK_NB))
+  {
+    fclose($lf);
+    return new PwgError(409, 'Already finishing, poll pu.upload.status');
+  }
+  $GLOBALS['pu_finish_lock'] = $lf;   // held until the request ends
+
+  clearstatcache();
+  if (file_exists($dir.'/result.json'))
+  {
+    return pu_result_response($dir);
+  }
+  if (file_exists($dir.'/finishing') && !file_exists($dir.'/data.part'))
+  {
+    // an earlier finish died after Piwigo had already moved the file into place
+    $msg = 'Registration was interrupted after the file was stored; check the album and re-upload if it is missing';
+    file_put_contents($dir.'/result.json', json_encode(array('error' => $msg, 'code' => 500)));
+    return new PwgError(500, $msg);
+  }
+
   $missing = pu_missing_chunks($dir, $meta);
   if (count($missing) > 0)
   {
     return new PwgError(409, 'Missing chunks: '.implode(',', array_slice($missing, 0, 200)));
   }
-  clearstatcache();
   if (filesize($dir.'/data.part') != $meta['size'])
   {
     return new PwgError(500, 'Assembled size mismatch');
   }
 
-  // atomic lock: only one finisher
-  if (!@mkdir($dir.'/lock'))
-  {
-    return new PwgError(409, 'Already finishing, poll pu.upload.status');
-  }
+  touch($dir.'/finishing');
 
   // Keep going even if Cloudflare drops the connection at 100 s: the browser
   // will poll pu.upload.status and pick up result.json.
@@ -456,6 +476,21 @@ SELECT COUNT(*) FROM '.LOUNGE_TABLE.'
 // pu.upload.status / pu.upload.abort
 // ---------------------------------------------------------------------------
 
+/** true while some PHP worker holds the finish lock for this upload */
+function pu_finisher_alive($dir)
+{
+  $lf = @fopen($dir.'/finish.lock', 'c');
+  if (!$lf) return false;
+  if (flock($lf, LOCK_EX | LOCK_NB))
+  {
+    flock($lf, LOCK_UN);
+    fclose($lf);
+    return false;
+  }
+  fclose($lf);
+  return true;
+}
+
 function pu_ws_status($params, $service)
 {
   if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
@@ -471,9 +506,11 @@ function pu_ws_status($params, $service)
       ? array('state' => 'done', 'result' => $res['result'])
       : array('state' => 'error', 'message' => $res['error']);
   }
-  if (is_dir($dir.'/lock'))
+  if (file_exists($dir.'/finishing'))
   {
-    return array('state' => 'finishing');
+    if (pu_finisher_alive($dir)) return array('state' => 'finishing');
+    // the PHP worker running finish is gone without writing a result
+    return array('state' => 'interrupted', 'retryable' => file_exists($dir.'/data.part'));
   }
   $missing = pu_missing_chunks($dir, $meta);
   return array(
@@ -492,7 +529,7 @@ function pu_ws_abort($params, $service)
   if ($r instanceof PwgError) return $r;
   list($dir) = $r;
 
-  if (is_dir($dir.'/lock') && !file_exists($dir.'/result.json'))
+  if (file_exists($dir.'/finishing') && !file_exists($dir.'/result.json') && pu_finisher_alive($dir))
   {
     return new PwgError(409, 'Upload is being finalized, cannot abort');
   }

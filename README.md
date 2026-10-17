@@ -79,7 +79,7 @@ Manual alternative: copy this folder to `piwigo/plugins/ParallelUpload` and acti
 
 ## Replacing the Web Form
 
-Settings → **Replace the Web Form uploader** (or `--replace-web-form`). The core Web Form
+*Admin → Plugins → Parallel Upload → Settings* → **Replace the Web Form uploader** (or `--replace-web-form`). The core Web Form
 tab disappears, Parallel Upload becomes the first tab under *Photos → Add*, and every
 core link to the Web Form (the menu entry, the "add photos" button on albums, the
 empty-gallery prompt) opens Parallel Upload, keeping the album preselected. Two core
@@ -88,7 +88,7 @@ view and *add formats to a photo*. Untick the option to get the Web Form back.
 
 ## Server limits to raise (inside the Piwigo container)
 
-Chunk size is automatically capped by what the server will accept; the settings panel
+Chunk size is automatically capped by what the server will accept; the settings page
 shows which limit is binding. For 32 MB chunks (default):
 
 ```ini
@@ -104,7 +104,14 @@ client_max_body_size 40m;      # nginx in front of php-fpm, if any
 
 For Apache, `LimitRequestBody` (if set) must also exceed the chunk size.
 
-## Settings
+## Settings and who can use what
+
+* **Uploader** (*Photos → Add → Parallel Upload*): any Piwigo administrator.
+* **Settings** (*Admin → Plugins → Parallel Upload → Settings*, or
+  `admin.php?page=plugin-ParallelUpload`): **webmaster only**. Other administrators
+  are sent to the uploader, don't see the Settings link, and can't save changes. The
+  "chunks are capped by PHP" hint is also shown only to webmasters.
+
 
 * **Chunk size** (default 32 MB, max 95). Bigger means fewer requests; smaller means
   finer progress, cheaper retries and less RAM in the browser (`chunk × connections`

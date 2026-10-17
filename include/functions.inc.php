@@ -69,6 +69,18 @@ function pu_ini_bytes($key)
   return (int)$n; // 0 means unlimited for post_max_size
 }
 
+/** Hints shown when PHP limits force smaller chunks than configured. */
+function pu_limit_warnings($cfg)
+{
+  list($max, $why) = pu_server_max_chunk();
+  $chunk = pu_effective_chunk_size();
+  if ($chunk >= (int)round($cfg['chunk_size_mb'] * 1000000)) return array();
+  return array(sprintf(
+    l10n('Chunks are capped at %s by %s (you asked for %s MB). Raise upload_max_filesize and post_max_size to about %d M in PHP, and client_max_body_size in nginx, to use bigger chunks.'),
+    round($chunk / 1000000, 1).' MB', $why, $cfg['chunk_size_mb'], ceil($cfg['chunk_size_mb']) + 4
+  ));
+}
+
 /** Chunk size the browser should use, in bytes. */
 function pu_effective_chunk_size()
 {
@@ -136,8 +148,10 @@ function pu_buffer_usage()
   $bytes = 0; $count = 0;
   foreach (glob($base.'/pu_*', GLOB_ONLYDIR) ?: array() as $dir)
   {
+    // finished uploads keep only a small result file until purged; don't count them
+    if (!file_exists($dir.'/data.part')) continue;
     $count++;
-    if (file_exists($dir.'/data.part')) $bytes += filesize($dir.'/data.part');
+    $bytes += filesize($dir.'/data.part');
   }
   return array($count, $bytes);
 }
