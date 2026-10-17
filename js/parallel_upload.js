@@ -10,6 +10,13 @@
 (function () {
   'use strict';
 
+  // Run after the page's inline footer scripts, which define the core album
+  // selector's strings and our album list.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);
+  else main();
+
+  function main() {
+
   const app = document.getElementById('pu-app');
   if (!app) return;
 
@@ -354,7 +361,7 @@
   function onLeave(e) { e.preventDefault(); e.returnValue = CFG.strLeave; return CFG.strLeave; }
 
   function start() {
-    if (!albumId()) { $('pu-album').focus(); flash($('pu-album')); return; }
+    if (!albumId()) { openAlbumPicker(); return; }
     if (!files.some((f) => f.state === 'queued')) return;
     if (!S.running) {
       S.running = true; S.paused = false; S.cancelled = false;
@@ -362,7 +369,8 @@
       S.lastT = S.t0; S.lastSent = totals().sent; S.rateSamples = 0; S.rate = 0;
       window.addEventListener('beforeunload', onLeave);
     }
-    $('pu-album').disabled = $('pu-level').disabled = $('pu-update').disabled = true;
+    $('pu-level').disabled = $('pu-update').disabled = true;
+    app.classList.add('album-locked');      // no album change once files are on their way
     $('pu-results').hidden = true;
     pump();
     render(true);
@@ -577,7 +585,7 @@
     $('pu-pause').innerHTML = S.paused ? '<span class="icon-play"></span> Resume' : '<span class="icon-pause"></span> Pause';
     $('pu-cancel').hidden = !S.running;
     $('pu-clear').hidden = S.running;
-    if (!S.running) $('pu-album').disabled = $('pu-level').disabled = $('pu-update').disabled = false;
+    if (!S.running) { $('pu-level').disabled = $('pu-update').disabled = false; app.classList.remove('album-locked'); }
 
     // rows
     for (const f of files) renderRow(f, force, warm);
@@ -686,14 +694,74 @@
   $('pu-cancel').addEventListener('click', cancel);
   $('pu-clear').addEventListener('click', clearList);
 
-  const album = $('pu-album');
-  try {
-    if (!album.value) {
-      const last = localStorage.getItem('pu.album');
-      if (last && album.querySelector(`option[value="${CSS.escape(last)}"]`)) album.value = last;
+  // ---------------------------------------------------------------- album picker (core AlbumSelector)
+  const names = (typeof pu_album_names === 'object' && pu_album_names) || {};
+
+  function setAlbum(id, name) {
+    id = id ? String(id) : '';
+    $('pu-album').value = id;
+    if (id) {
+      if (name) names[id] = name;
+      $('selectedAlbumName').textContent = names[id] || ('#' + id);
+      try { localStorage.setItem('pu.album', id); } catch (e) {}
     }
-  } catch (e) {}
-  album.addEventListener('change', () => { try { localStorage.setItem('pu.album', album.value); } catch (e) {} render(true); });
+    $('selectedAlbum').hidden = !id;
+    $('addPhotosAS').hidden = !!id;
+    render(true);
+  }
+
+  // preselected (?album=ID) wins, else the album used last time
+  if (!$('pu-album').value) {
+    try {
+      const last = localStorage.getItem('pu.album');
+      if (last && names[last]) setAlbum(last);
+    } catch (e) {}
+  }
+
+  const ab = (typeof AlbumSelector === 'function') ? new AlbumSelector({
+    selectedCategoriesIds: $('pu-album').value ? [$('pu-album').value] : [],
+    adminMode: true,                               // search all albums + "create album" inside the modal
+    modalTitle: (typeof str_drop_album_ab !== 'undefined') ? str_drop_album_ab : '',
+    selectAlbum: ({ album, newSelectedAlbum }) => {
+      newSelectedAlbum();
+      // same text extraction as core's add_related_category()
+      let label = '';
+      if (album.full_name_with_admin_links) {
+        jQuery('<div>' + album.full_name_with_admin_links + '</div>').find('a').each(function () {
+          label += (label ? ' / ' : '') + jQuery(this).text();
+        });
+      }
+      const id = ab.get_selected_albums()[0] || album.id;
+      setAlbum(id, label || album.fullname || names[id] || album.name);
+    },
+  }) : null;
+
+  function openAlbumPicker() {
+    if (app.classList.contains('album-locked')) return;
+    if (ab) ab.open();
+  }
+  $('btnPhotosAS').addEventListener('click', openAlbumPicker);
+  $('selectedAlbumEdit').addEventListener('click', openAlbumPicker);
+
+  // ---------------------------------------------------------------- first album (gallery has none yet)
+  const firstModal = jQuery('#addFirstAlbum');
+  $('btnFirstAlbum').addEventListener('click', () => { $('inputFirstAlbum').value = ''; firstModal.fadeIn(); $('inputFirstAlbum').focus(); });
+  $('closeFirstAlbum').addEventListener('click', () => firstModal.fadeOut());
+  $('inputFirstAlbum').addEventListener('keyup', (e) => { if (e.key === 'Enter') $('btnAddFirstAlbum').click(); });
+  $('btnAddFirstAlbum').addEventListener('click', async () => {
+    const name = $('inputFirstAlbum').value.trim();
+    if (!name) { flash($('inputFirstAlbum')); return; }
+    try {
+      const r = await ws('pwg.categories.add', { name });
+      if (ab) ab.select_album(r.id);
+      setAlbum(r.id, name);
+      firstModal.hide();
+      $('pu-welcome').hidden = true;
+      $('pu-main').hidden = false;
+    } catch (e) {
+      alert(e.message);
+    }
+  });
 
 
   setInterval(render, 250);
@@ -701,4 +769,5 @@
 
   // debug / automation hook
   window.ParallelUpload = { files, state: S, config: CFG, addFiles, start, pause, cancel };
+}
 })();

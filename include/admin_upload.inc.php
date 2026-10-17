@@ -19,13 +19,24 @@ $tabsheet->assign();
 $page['active_menu'] = get_active_menu('photos_add');
 
 // ---------------------------------------------------------------- albums, levels
-$query = 'SELECT id, name, uppercats, global_rank FROM '.CATEGORIES_TABLE.';';
-$selected = array();
-if (isset($_GET['album']) && is_numeric($_GET['album'])) $selected[] = (int)$_GET['album'];
-display_select_cat_wrapper($query, $selected, 'category_options');
+// full names ("Family Trips / Summer 2026") so the picker can show the
+// remembered or preselected album without a round-trip
+$album_names = array();
+$cats = query2array('SELECT id, name, uppercats, global_rank FROM '.CATEGORIES_TABLE.';');
+usort($cats, 'global_rank_compare');
+foreach ($cats as $c)
+{
+  $album_names[$c['id']] = strip_tags(get_cat_display_name_cache($c['uppercats'], null));
+}
+$album_id = '';
+if (isset($_GET['album']) && isset($album_names[(int)$_GET['album']])) $album_id = (int)$_GET['album'];
 
 $template->assign(array(
   'PU_CFG'           => $cfg,
+  'PU_ALBUM_NAMES'   => (object)$album_names,
+  'PU_ALBUM_ID'      => $album_id,
+  'PU_ALBUM_NAME'    => $album_id ? $album_names[$album_id] : '',
+  'PU_NB_ALBUMS'     => count($album_names),
   'PU_CHUNK'         => pu_effective_chunk_size(),
   // server-tuning hints are only useful to whoever can change the settings
   'PU_WARNINGS'      => is_webmaster() ? pu_limit_warnings($cfg) : array(),

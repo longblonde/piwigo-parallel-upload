@@ -182,3 +182,13 @@
 
 .pu-flash { animation: pu-flash .9s; }
 @keyframes pu-flash { 30% { box-shadow: 0 0 0 3px var(--pu-error); } }
+
+/* ---------------------------------------------------- album picker (core markup) */
+.pu .pu-selected-album, .pu .pu-select-album { margin: 0; }
+.pu .pu-select-album .head-button-1 { margin: 0; display: inline-flex; cursor: pointer; }
+.pu .pu-selected-album { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.pu .pu-selected-album #selectedAlbumEdit { cursor: pointer; }
+.pu.album-locked #selectedAlbumEdit { display: none; }
+.pu-welcome { text-align: center; padding: 70px 16px; }
+.pu-welcome .addAlbumEmptyTitle { margin-bottom: 4px; }
+.pu-welcome .buttonLike { display: inline-block; padding: 10px 15px; font-weight: bold; font-size: 14px; }

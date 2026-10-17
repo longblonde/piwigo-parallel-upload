@@ -77,6 +77,14 @@ The script:
 
 Manual alternative: copy this folder to `piwigo/plugins/ParallelUpload` and activate it in *Plugins*.
 
+## Choosing an album
+
+The uploader uses Piwigo's own album picker, the same modal as the core Web Form:
+search across all albums, and **Creation mode** to add a sub-album and select it in
+one step. The last album used is remembered, and links like *add photos* on an album
+open the uploader with that album already chosen. On a gallery with no albums yet,
+the uploader shows the core *Welcome! / Create a first album* prompt.
+
 ## Replacing the Web Form
 
 *Admin → Plugins → Parallel Upload → Settings* → **Replace the Web Form uploader** (or `--replace-web-form`). The core Web Form

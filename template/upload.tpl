@@ -1,5 +1,11 @@
 {combine_css path=$PU_PATH|cat:'css/parallel_upload.css' order=100}
-{combine_script id='pu.uploader' load='footer' path=$PU_PATH|cat:'js/parallel_upload.js'}
+{* core album picker (same modal as Photos > Add > Web Form) *}
+{include file='include/album_selector.inc.tpl'}
+{combine_script id='pu.uploader' load='footer' require='albumSelector' path=$PU_PATH|cat:'js/parallel_upload.js'}
+{footer_script}
+const pu_album_names = {$PU_ALBUM_NAMES|json_encode};
+const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
+{/footer_script}
 
 <div id="pu-app" class="pu{if $themeconf.colorscheme == 'dark'} pu-dark{/if}"
   data-token="{$PU_TOKEN}"
@@ -16,14 +22,26 @@
     <div class="pu-warn"><span class="icon-attention"></span> {$w}</div>
   {/foreach}
 
+  {* ------------------------------------------------------------ no album yet: same welcome as the core Web Form *}
+  <div class="pu-welcome" id="pu-welcome"{if $PU_NB_ALBUMS > 0} hidden{/if}>
+    <div class="addAlbumEmptyTitle">{'Welcome!'|translate}</div>
+    <p class="addAlbumEmptyInfos">{'Piwigo requires an album to add photos.'|translate}</p>
+    <a class="buttonLike" id="btnFirstAlbum">{'Create a first album'|translate}</a>
+  </div>
+
+  <div id="pu-main"{if $PU_NB_ALBUMS == 0} hidden{/if}>
   {* ------------------------------------------------------------ destination *}
   <section class="pu-card pu-setup">
     <div class="pu-field">
-      <label for="pu-album">{'Album'|translate}</label>
-      <select id="pu-album">
-        <option value="">— {'Select an album'|translate} —</option>
-        {html_options options=$category_options selected=$category_options_selected}
-      </select>
+      <label>{'Drop into album'|translate}</label>
+      <input type="hidden" id="pu-album" value="{$PU_ALBUM_ID}">
+      <div class="selectedAlbum pu-selected-album" id="selectedAlbum"{if !$PU_ALBUM_ID} hidden{/if}>
+        <span class="icon-sitemap" id="selectedAlbumName">{$PU_ALBUM_NAME}</span>
+        <a class="icon-pencil" id="selectedAlbumEdit" title="{'Change album'|translate}"></a>
+      </div>
+      <div class="selectAlbumSelector pu-select-album" id="addPhotosAS"{if $PU_ALBUM_ID} hidden{/if}>
+        <p class="head-button-1 icon-folder-open" id="btnPhotosAS">{"Select or create an album"|translate}</p>
+      </div>
     </div>
     <div class="pu-field pu-field-sm">
       <label for="pu-level">{'Who can see these photos?'|translate}</label>
@@ -99,4 +117,20 @@
     <p><a class="buttonLike" id="pu-batch" href="#">{'Manage this set of photos'|translate}</a></p>
   </section>
 
+  </div>{* pu-main *}
+
+  {* ------------------------------------------------------------ first album modal (core markup) *}
+  <div class="bg-modal" id="addFirstAlbum">
+    <div class="new-album-modal-content">
+      <a class="icon-cancel close-modal" id="closeFirstAlbum"></a>
+      <div class="AddIconContainer"><span class="AddIcon icon-blue icon-add-album"></span></div>
+      <div class="AddIconTitle"><span>{'Create your first album'|translate}</span></div>
+      <div class="AddAlbumInputContainer">
+        <label class="user-property-label AddAlbumLabelUsername">{'Album name'|translate}
+          <input class="user-property-input" id="inputFirstAlbum">
+        </label>
+      </div>
+      <a class="buttonLike icon-plus" id="btnAddFirstAlbum">{'Create and select'|translate}</a>
+    </div>
+  </div>
 </div>
