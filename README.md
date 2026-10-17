@@ -77,6 +77,35 @@ The script:
 
 Manual alternative: copy this folder to `piwigo/plugins/ParallelUpload` and activate it in *Plugins*.
 
+## Upload speed and the transfer plan
+
+Each uploader can type their connection's upload speed (Mbps) next to the album
+picker; it is saved to their Piwigo account, so it follows them across browsers.
+The plugin then aims at **80 %** of it (webmaster setting *Speed target*) and paces
+itself so the line stays usable for everything else:
+
+* **connections** = target ÷ ~64 Mbps per stream (one HTTPS stream through a tunnel
+  rarely does much more), at least 2, at most *Max parallel connections*;
+* **chunk size** = about 6 seconds of transfer per connection, between 8 MB and
+  *Max chunk size*;
+* **pacing**: a token bucket admits a new chunk only when the running average is
+  under the target, so a 1 Gbps line told "500" really averages ~400 Mbps.
+
+Leave the field empty for *Auto*: max connections × max chunk, unpaced.
+
+| Stated speed | Target | Plan (max 8 connections, max 64 MB chunks) |
+|---|---|---|
+| 25 Mbps | 20 Mbps | 2 × 8 MB |
+| 100 Mbps | 80 Mbps | 2 × 30 MB |
+| 300 Mbps | 240 Mbps | 4 × 45 MB |
+| 500 Mbps | 400 Mbps | 7 × 43 MB |
+| 1000 Mbps | 800 Mbps | 8 × 64 MB (connection-limited) |
+
+With the out-of-the-box ceilings (4 connections, 32 MB) anything above ~250 Mbps is
+capped at 4 × 32 MB; raise both in the settings for faster lines. Every chunk in
+flight occupies one PHP-FPM worker, so `pm.max_children` must be at least
+connections + 2 (Debian's default is 5) — the installer warns when it's lower.
+
 ## Choosing an album
 
 The uploader uses Piwigo's own album picker, the same modal as the core Web Form:

@@ -24,8 +24,14 @@
   const ds = app.dataset;
   const CFG = {
     token: ds.token,
+    // webmaster ceilings
+    maxChunk: parseInt(ds.chunk, 10),
+    maxConc: Math.max(1, parseInt(ds.concurrency, 10) || 4),
+    targetPct: Math.max(10, Math.min(100, parseFloat(ds.targetPct) || 80)),
+    // active plan (set by applyPlan from the user's stated speed)
     chunk: parseInt(ds.chunk, 10),
     concurrency: Math.max(1, parseInt(ds.concurrency, 10) || 4),
+    cap: 0,                    // bytes/s pacing target, 0 = unpaced
     retries: Math.max(0, parseInt(ds.retries, 10) || 0),
     sha: ds.sha === '1' && !!(window.isSecureContext && window.crypto && crypto.subtle),
     exts: ds.exts.split(',').filter(Boolean),
@@ -44,6 +50,8 @@
     while (b >= 1000 && i < u.length - 1) { b /= 1000; i++; }
     return (i === 0 ? b.toFixed(0) : b < 10 ? b.toFixed(2) : b < 100 ? b.toFixed(1) : b.toFixed(0)) + ' ' + u[i];
   };
+  const fmtMbps = (bps) => { const m = bps * 8 / 1e6; return (m < 10 ? m.toFixed(1) : Math.round(m)) + ' Mbps'; };
+  const fmtRate = (bps) => fmtBytes(bps) + '/s · ' + fmtMbps(bps);
   const fmtTime = (s) => {
     if (!isFinite(s) || s < 0) return '—';
     s = Math.round(s);
@@ -121,13 +129,16 @@
     constructor(f) {
       this.id = 'puf' + (++seq);
       this.file = f; this.name = f.name; this.size = f.size;
-      this.chunkSize = CFG.chunk;
-      this.n = Math.max(1, Math.ceil(f.size / this.chunkSize));
-      this.chunks = Array.from({ length: this.n }, (_, i) => new Chunk(this, i));
+      this.split(CFG.chunk);
       this.state = 'queued';   // queued | init | uploading | finishing | processing | done | error | cancelled
       this.uploadId = null; this.err = ''; this.result = null; this.initAttempts = 0;
       this.rate = 0; this.lastSent = 0; this.lastT = 0;
       this.el = null;
+    }
+    split(chunkSize) {
+      this.chunkSize = chunkSize;
+      this.n = Math.max(1, Math.ceil(this.size / chunkSize));
+      this.chunks = Array.from({ length: this.n }, (_, i) => new Chunk(this, i));
     }
     get sent() {
       if (this.state === 'done') return this.size;
@@ -159,10 +170,35 @@
       }
       if (f.state === 'uploading') {
         const c = f.chunks.find((x) => x.state === 'queued');
-        if (c) { c.state = CFG.sha ? 'hashing' : 'sending'; c.gen++; return () => sendChunk(c); }
+        if (c) {
+          if (!takeTokens(c.len)) return null;   // over the speed target: wait for the bucket to refill
+          c.state = CFG.sha ? 'hashing' : 'sending'; c.gen++; return () => sendChunk(c);
+        }
       }
     }
     return null;
+  }
+
+  // ------------------------------------------------------------------ pacing
+  // Token bucket: starting a chunk spends its size; the bucket refills at the
+  // target rate, so the average stays at the target while each chunk still
+  // runs at line speed. It starts with one chunk's worth so a run ramps up to
+  // full parallelism instead of opening with a burst over the target.
+  const bucket = { tokens: 0, t: 0, timer: 0 };
+  const burst = () => CFG.concurrency * CFG.chunk;
+  function takeTokens(n) {
+    if (!CFG.cap) return true;
+    const now = performance.now();
+    if (!bucket.t) { bucket.t = now; bucket.tokens = CFG.chunk; }
+    bucket.tokens = Math.min(burst(), bucket.tokens + (now - bucket.t) / 1000 * CFG.cap);
+    bucket.t = now;
+    if (bucket.tokens >= n) { bucket.tokens -= n; return true; }
+    if (!bucket.timer) {
+      const wait = Math.ceil((n - bucket.tokens) / CFG.cap * 1000) + 20;
+      bucket.timer = setTimeout(() => { bucket.timer = 0; pump(); }, wait);
+    }
+    S.paced = true;
+    return false;
   }
 
   function pump() {
@@ -567,7 +603,7 @@
     $('pu-total-fill').style.width = pct.toFixed(2) + '%';
     setText('pu-total-pct', pct.toFixed(pct < 10 && pct > 0 ? 1 : 0) + '%');
     setText('pu-s-bytes', `${fmtBytes(t.sent)} / ${fmtBytes(t.size)}`);
-    setText('pu-s-speed', active && warm ? fmtBytes(S.rate) + '/s' : (elapsed > 0 && !active && t.sent ? 'avg ' + fmtBytes(t.sent / elapsed) + '/s' : '—'));
+    setText('pu-s-speed', active && warm ? fmtRate(S.rate) : (elapsed > 0 && !active && t.sent ? 'avg ' + fmtRate(t.sent / elapsed) : '—'));
     setText('pu-s-elapsed', elapsed > 0 ? fmtTime(elapsed) : '—');
     setText('pu-s-conn', `${t.live} / ${CFG.concurrency}`);
     setText('pu-s-chunks', `${t.chunksDone} / ${t.chunks}`);
@@ -676,7 +712,54 @@
   const input = $('pu-input');
   input.accept = CFG.exts.map((e) => '.' + e).join(',');
   $('pu-exts').textContent = CFG.exts.join(', ');
-  $('pu-plan-chunk').textContent = fmtBytes(CFG.chunk);
+  // ---------------------------------------------------------------- upload plan from the user's stated speed
+  const PER_CONN = 8e6;       // what one HTTPS stream through a tunnel typically sustains (~64 Mbps)
+  const CHUNK_SECONDS = 6;    // aim for each chunk to take about this long on its connection
+
+  function makePlan(mbps) {
+    if (!(mbps > 0)) return { conc: CFG.maxConc, chunk: CFG.maxChunk, cap: 0, limited: false };
+    const cap = mbps * 1e6 / 8 * CFG.targetPct / 100;
+    const want = Math.max(2, Math.ceil(cap / PER_CONN));
+    const conc = Math.max(1, Math.min(CFG.maxConc, want));
+    const per = cap / conc;
+    const lo = Math.min(8e6, CFG.maxChunk);
+    const chunk = Math.max(lo, Math.min(CFG.maxChunk, Math.round(per * CHUNK_SECONDS / 1e6) * 1e6));
+    return { conc, chunk, cap, limited: want > CFG.maxConc };
+  }
+
+  function applyPlan(mbps) {
+    const p = makePlan(mbps);
+    CFG.concurrency = p.conc; CFG.chunk = p.chunk; CFG.cap = p.cap;
+    bucket.tokens = Math.min(bucket.tokens, burst());
+    // files nobody has started yet take the new chunk size
+    for (const f of files) {
+      if (f.state === 'queued' && !f.uploadId && f.chunkSize !== CFG.chunk) {
+        f.split(CFG.chunk);
+        const old = f.el; old.replaceWith(buildRow(f));
+      }
+    }
+    const txt = p.cap
+      ? `Target <b>${fmtMbps(p.cap)}</b> (${CFG.targetPct}%) · <b>${p.conc}</b> × <b>${fmtBytes(p.chunk)}</b>` +
+        (p.limited ? ` <span class="pu-plan-note" title="Raise &quot;Max parallel connections&quot; in the plugin settings to use more of this link">· capped at ${CFG.maxConc} connections</span>` : '')
+      : `Auto · <b>${p.conc}</b> × <b>${fmtBytes(p.chunk)}</b>, unpaced`;
+    $('pu-plan-text').innerHTML = txt + (app.dataset.canConfigure === '1' ? ` · <a href="${app.dataset.settingsUrl}">settings</a>` : '');
+    pump(); render(true);
+  }
+
+  const mbpsIn = $('pu-mbps');
+  const saved = parseFloat(ds.mbps) || 0;
+  if (saved > 0) mbpsIn.value = saved;
+  applyPlan(saved);
+  let saveTimer = 0;
+  mbpsIn.addEventListener('input', () => {
+    const v = parseFloat(mbpsIn.value);
+    applyPlan(v > 0 ? v : 0);
+    clearTimeout(saveTimer);
+    // remembered per Piwigo user (user preferences), not per browser
+    saveTimer = setTimeout(() => {
+      ws('pwg.users.preferences.set', { param: 'pu_upload_mbps', value: v > 0 ? String(v) : '0' }).catch(() => {});
+    }, 700);
+  });
   $('pu-browse').addEventListener('click', () => input.click());
   input.addEventListener('change', () => { addFiles(Array.from(input.files)); input.value = ''; });
 

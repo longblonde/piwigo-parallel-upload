@@ -13,17 +13,21 @@
   <form method="post" action="{$PU_SETTINGS_URL}" class="pu-card pu-settings">
       <input type="hidden" name="pwg_token" value="{$PU_TOKEN}">
       <div class="pu-grid">
-        <label>{'Chunk size'|translate} (MB)
+        <label>{'Max chunk size'|translate} (MB)
           <input type="number" name="chunk_size_mb" min="1" max="95" step="1" value="{$PU_CFG.chunk_size_mb}">
-          <small>{'Each request carries one chunk. Cloudflare rejects request bodies over 100 MB; 95 is the ceiling.'|translate}</small>
+          <small>{'Used as-is when no upload speed is entered, and as the ceiling when one is. Cloudflare rejects request bodies over 100 MB; 95 is the hard limit.'|translate}</small>
         </label>
-        <label>{'Parallel connections'|translate}
+        <label>{'Max parallel connections'|translate}
           <input type="number" name="concurrency" min="1" max="16" value="{$PU_CFG.concurrency}">
-          <small>{'Chunks in flight at once, across all files. 3–6 usually saturates a home uplink.'|translate}</small>
+          <small>{'Ceiling for chunks in flight at once. Keep it below PHP-FPM pm.max_children (Debian default 5) minus one or two for page loads.'|translate}</small>
         </label>
         <label>{'Retries per chunk'|translate}
           <input type="number" name="max_retries" min="0" max="20" value="{$PU_CFG.max_retries}">
           <small>{'Back-off doubles each time (1 s, 2 s, 4 s…).'|translate}</small>
+        </label>
+        <label>{'Speed target'|translate} (%)
+          <input type="number" name="speed_target_pct" min="10" max="100" value="{$PU_CFG.speed_target_pct}">
+          <small>{'Uploaders can enter their connection speed; the plan aims at this share of it and paces itself so the link stays usable.'|translate}</small>
         </label>
         <label>{'Purge abandoned uploads after'|translate} (h)
           <input type="number" name="stale_hours" min="1" max="720" value="{$PU_CFG.stale_hours}">

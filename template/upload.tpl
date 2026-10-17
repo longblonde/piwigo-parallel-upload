@@ -11,6 +11,10 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
   data-token="{$PU_TOKEN}"
   data-chunk="{$PU_CHUNK}"
   data-concurrency="{$PU_CFG.concurrency}"
+  data-mbps="{$PU_USER_MBPS}"
+  data-target-pct="{$PU_CFG.speed_target_pct}"
+  data-can-configure="{if $PU_CAN_CONFIGURE}1{else}0{/if}"
+  data-settings-url="{$PU_SETTINGS_URL}"
   data-retries="{$PU_CFG.max_retries}"
   data-sha="{if $PU_CFG.verify_sha256}1{else}0{/if}"
   data-exts="{$PU_EXTS}"
@@ -52,9 +56,9 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
       <small>{'Replace photos with the same file name in this album'|translate}</small>
     </div>
     <div class="pu-field pu-field-sm pu-plan">
-      <label>{'Transfer plan'|translate}</label>
-      <div><b id="pu-plan-chunk"></b> {'chunks'|translate} · <b>{$PU_CFG.concurrency}</b> {'parallel'|translate}</div>
-      {if $PU_CAN_CONFIGURE}<small><a href="{$PU_SETTINGS_URL}">{'Settings'|translate}</a></small>{/if}
+      <label for="pu-mbps">{'Your upload speed'|translate}</label>
+      <div class="pu-speed"><input type="number" id="pu-mbps" min="1" max="100000" step="any" placeholder="{'auto'|translate}"> <span>Mbps</span></div>
+      <div class="pu-plan-text" id="pu-plan-text"></div>
     </div>
   </section>
 

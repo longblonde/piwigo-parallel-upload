@@ -19,6 +19,7 @@ if (isset($_POST['pu_save']))
     'verify_sha256'    => !empty($_POST['verify_sha256']),
     'stale_hours'      => max(1, min(720, (int)$_POST['stale_hours'])),
     'replace_web_form' => !empty($_POST['replace_web_form']),
+    'speed_target_pct' => max(10, min(100, (int)$_POST['speed_target_pct'])),
   ));
   $page['infos'][] = l10n('Settings saved');
 }

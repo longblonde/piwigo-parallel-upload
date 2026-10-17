@@ -14,6 +14,7 @@ function pu_default_config()
     'verify_sha256'   => true, // per-chunk integrity check (needs HTTPS in the browser)
     'stale_hours'     => 24,   // abandoned partial uploads are purged after this
     'replace_web_form'=> false,// hide core "Web Form" tab, Photos > Add opens Parallel Upload
+    'speed_target_pct'=> 80,   // a user's stated upload speed is targeted at this percentage
   );
 }
 

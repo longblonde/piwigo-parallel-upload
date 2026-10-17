@@ -192,3 +192,13 @@
 .pu-welcome { text-align: center; padding: 70px 16px; }
 .pu-welcome .addAlbumEmptyTitle { margin-bottom: 4px; }
 .pu-welcome .buttonLike { display: inline-block; padding: 10px 15px; font-weight: bold; font-size: 14px; }
+
+/* ---------------------------------------------------- upload speed / plan */
+.pu-speed { display: flex; align-items: center; gap: 6px; }
+.pu-speed input { width: 96px; padding: 5px 7px; }
+.pu-speed span { color: var(--pu-dim); }
+.pu-plan-text { font-size: 12px; color: var(--pu-dim); line-height: 1.5; }
+.pu-plan-text b { color: var(--pu-accent); font-weight: 700; }
+.pu-plan-note { color: var(--pu-retry); }
+.pu-plan-text a { color: var(--pu-dim); text-decoration: underline; }
+.pu-plan-text b { white-space: nowrap; }

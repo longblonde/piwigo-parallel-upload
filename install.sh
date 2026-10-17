@@ -189,6 +189,19 @@ EOF
     [[ "$d" == */apache2/* ]] && RELOAD+=("apache2")
     [[ "$d" =~ ^/etc/php([0-9]+)/conf.d ]] && RELOAD+=("php-fpm${BASH_REMATCH[1]}")
   done
+  # each chunk in flight occupies one PHP-FPM worker
+  for pool in /etc/php/*/fpm/pool.d/*.conf; do
+    [ -f "$pool" ] || continue
+    mc=$(sed -nE 's/^\s*pm\.max_children\s*=\s*([0-9]+).*/\1/p' "$pool" | head -n 1)
+    if [ -n "$mc" ]; then
+      if [ "$mc" -lt 10 ]; then
+        c_warn "$pool: pm.max_children = $mc. Each parallel chunk uses one PHP worker; keep the plugin's"
+        c_warn "  max parallel connections at $(( mc > 3 ? mc - 2 : 1 )) or raise pm.max_children (10+ for 8 connections)."
+      else
+        c_ok "PHP-FPM: pm.max_children = $mc ($pool)"
+      fi
+    fi
+  done
   # FPM pool files can override conf.d with php_admin_value / php_value
   for pool in /etc/php/*/fpm/pool.d/*.conf /etc/php*/php-fpm.d/*.conf /usr/local/etc/php-fpm.d/*.conf; do
     [ -f "$pool" ] || continue

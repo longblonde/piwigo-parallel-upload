@@ -38,6 +38,7 @@ $template->assign(array(
   'PU_ALBUM_NAME'    => $album_id ? $album_names[$album_id] : '',
   'PU_NB_ALBUMS'     => count($album_names),
   'PU_CHUNK'         => pu_effective_chunk_size(),
+  'PU_USER_MBPS'     => (float)userprefs_get_param('pu_upload_mbps', 0),
   // server-tuning hints are only useful to whoever can change the settings
   'PU_WARNINGS'      => is_webmaster() ? pu_limit_warnings($cfg) : array(),
   'PU_CAN_CONFIGURE' => is_webmaster(),
