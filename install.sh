@@ -262,7 +262,11 @@ if [ "$DO_ACTIVATE" -eq 1 ]; then
     $host = $conf["db_host"]; $port = null; $sock = null;
     if (strpos($host, ":") !== false) { list($host, $p) = explode(":", $host, 2); if (ctype_digit($p)) $port = (int)$p; else $sock = $p; }
     mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-    $db = new mysqli($host, $conf["db_user"], $conf["db_password"], $conf["db_base"], $port, $sock);
+    try {
+      $db = new mysqli($host, $conf["db_user"], $conf["db_password"], $conf["db_base"], $port, $sock);
+    } catch (Throwable $e) {
+      fwrite(STDERR, "cannot connect to the database (".$e->getMessage().")\n"); exit(3);
+    }
     $db->set_charset("utf8mb4");
     $t = $prefixeTable;
     $row = $db->query("SELECT state, version FROM {$t}plugins WHERE id = \"".$db->real_escape_string($id)."\"")->fetch_assoc();
@@ -286,7 +290,14 @@ if [ "$DO_ACTIVATE" -eq 1 ]; then
     $st = $db->prepare("INSERT INTO {$t}config (param, value, comment) VALUES (\"parallel_upload\", ?, \"Parallel Upload plugin\") ON DUPLICATE KEY UPDATE value = VALUES(value)");
     $st->bind_param("s", $json); $st->execute();
     echo "replace_web_form=".($cfg["replace_web_form"] ? "on" : "off")."\n";
-  ' "$PIWIGO" "$PLUGIN_ID" "$PLUGIN_VERSION" "$REPLACE_WEB_FORM" | while read -r line; do c_ok "Piwigo: $line"; done
+  ' "$PIWIGO" "$PLUGIN_ID" "$PLUGIN_VERSION" "$REPLACE_WEB_FORM" > /tmp/pu-activate.$$ 2>&1 && act_ok=1 || act_ok=0
+  while read -r line; do
+    if [ "$act_ok" -eq 1 ]; then c_ok "Piwigo: $line"; else c_warn "Piwigo: $line"; fi
+  done < /tmp/pu-activate.$$
+  rm -f /tmp/pu-activate.$$
+  if [ "$act_ok" -ne 1 ]; then
+    c_warn "Plugin files are in place but it was not activated; activate it in Admin > Plugins."
+  fi
   # Piwigo caches its config in the session/template cache; clearing compiled templates is harmless
   rm -rf "$PIWIGO/_data/templates_c/"* 2>/dev/null || true
 fi
