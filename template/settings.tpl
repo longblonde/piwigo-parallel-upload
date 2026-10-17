@@ -12,6 +12,7 @@
 
   <form method="post" action="{$PU_SETTINGS_URL}" class="pu-card pu-settings">
       <input type="hidden" name="pwg_token" value="{$PU_TOKEN}">
+    <input type="hidden" name="pu_form" value="2">
       <div class="pu-grid">
         <label>{'Proxy request limit'|translate} (MB)
           <input type="number" name="proxy_limit_mb" min="10" max="5000" step="1" value="{$PU_CFG.proxy_limit_mb}">

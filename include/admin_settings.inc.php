@@ -12,15 +12,28 @@ check_status(ACCESS_WEBMASTER);
 if (isset($_POST['pu_save']))
 {
   check_pwg_token();
+  $cur = pu_get_config();
+  // A field missing from the POST (form opened before an update added it, or
+  // trimmed by a proxy) keeps its current value instead of falling to a minimum.
+  $num = function ($key, $min, $max, $float = false) use ($cur) {
+    if (!isset($_POST[$key]) || $_POST[$key] === '' || !is_numeric($_POST[$key])) return $cur[$key];
+    $v = $float ? (float)$_POST[$key] : (int)$_POST[$key];
+    return max($min, min($max, $v));
+  };
+  // checkboxes send nothing when unticked; only trust that on a form that knows about them
+  $box = function ($key) use ($cur) {
+    return isset($_POST['pu_form']) ? !empty($_POST[$key]) : (isset($_POST[$key]) ? true : $cur[$key]);
+  };
+  $proxy = $num('proxy_limit_mb', 10, 5000);
   pu_save_config(array(
-    'proxy_limit_mb'   => max(10, min(5000, (int)$_POST['proxy_limit_mb'])),
-    'chunk_size_mb'    => max(1, min(floor(max(10, min(5000, (int)$_POST['proxy_limit_mb'])) * 0.95), (float)$_POST['chunk_size_mb'])),
-    'concurrency'      => max(1, min(16, (int)$_POST['concurrency'])),
-    'max_retries'      => max(0, min(20, (int)$_POST['max_retries'])),
-    'verify_sha256'    => !empty($_POST['verify_sha256']),
-    'stale_hours'      => max(1, min(720, (int)$_POST['stale_hours'])),
-    'replace_web_form' => !empty($_POST['replace_web_form']),
-    'speed_target_pct' => max(10, min(100, (int)$_POST['speed_target_pct'])),
+    'proxy_limit_mb'   => $proxy,
+    'chunk_size_mb'    => min(floor($proxy * 0.95), $num('chunk_size_mb', 1, 5000, true)),
+    'concurrency'      => $num('concurrency', 1, 16),
+    'max_retries'      => $num('max_retries', 0, 20),
+    'stale_hours'      => $num('stale_hours', 1, 720),
+    'speed_target_pct' => $num('speed_target_pct', 10, 100),
+    'verify_sha256'    => $box('verify_sha256'),
+    'replace_web_form' => $box('replace_web_form'),
   ));
   $page['infos'][] = l10n('Settings saved');
 }
