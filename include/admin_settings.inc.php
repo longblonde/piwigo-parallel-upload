@@ -13,7 +13,8 @@ if (isset($_POST['pu_save']))
 {
   check_pwg_token();
   pu_save_config(array(
-    'chunk_size_mb'    => max(1, min(95, (float)$_POST['chunk_size_mb'])),
+    'proxy_limit_mb'   => max(10, min(5000, (int)$_POST['proxy_limit_mb'])),
+    'chunk_size_mb'    => max(1, min(floor(max(10, min(5000, (int)$_POST['proxy_limit_mb'])) * 0.95), (float)$_POST['chunk_size_mb'])),
     'concurrency'      => max(1, min(16, (int)$_POST['concurrency'])),
     'max_retries'      => max(0, min(20, (int)$_POST['max_retries'])),
     'verify_sha256'    => !empty($_POST['verify_sha256']),
@@ -53,9 +54,8 @@ $template->assign(array(
   'PU_CHUNK'        => pu_effective_chunk_size(),
   'PU_SERVER_MAX'   => $server_max,
   'PU_SERVER_WHY'   => $server_max_why,
+  'PU_PROXY_MAX_MB' => floor(pu_proxy_limit_mb($cfg) * 0.95),
   'PU_WARNINGS'     => $warnings,
-  'PU_FPM'          => $fpm,
-  'PU_FPM_NEEDED'   => pu_fpm_needed($cfg),
   'PU_TOKEN'        => get_pwg_token(),
   'PU_PATH'         => get_root_url().'plugins/'.PU_ID.'/',
   'PU_SETTINGS_URL' => PU_SETTINGS_URL,

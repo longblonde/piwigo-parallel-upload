@@ -61,7 +61,7 @@ The script:
 
 1. finds Piwigo (or use `--piwigo /path`), checks the version;
 2. clones this repo into `plugins/ParallelUpload` (re-running it updates in place) and gives it to the web user;
-3. writes `99-parallel-upload.ini` into each PHP-FPM / Apache `conf.d` so `upload_max_filesize` and `post_max_size` are at least 100M (it never lowers a bigger value), and warns about FPM pool overrides;
+3. writes `99-parallel-upload.ini` into each PHP-FPM / Apache `conf.d`, containing only the settings that are currently too low: `upload_max_filesize` and `post_max_size` up to the plugin's *Proxy request limit* (100 MB unless changed), `max_execution_time` and `max_input_time` up to 300 s. A value that is already higher, or unlimited (0), is left out; if nothing is too low the file is removed. It also warns about FPM pool overrides;
 4. adds `client_max_body_size 100m` for nginx (only if `nginx -t` accepts it) and lists any smaller per-site values you need to raise;
 5. reloads PHP-FPM / nginx / Apache;
 6. activates the plugin in Piwigo's database.
@@ -156,7 +156,10 @@ For Apache, `LimitRequestBody` (if set) must also exceed the chunk size.
   "chunks are capped by PHP" hint is also shown only to webmasters.
 
 
-* **Chunk size** (default 32 MB, max 95). Bigger means fewer requests; smaller means
+* **Proxy request limit** (default 100 MB). The largest request your proxy accepts;
+  chunks stay 5% under it. Raise it only if your proxy allows more (Cloudflare
+  Business 200, Enterprise 500), then re-run the installer so PHP and nginx follow.
+* **Max chunk size** (default 32 MB, at most 95% of the proxy limit). Bigger means fewer requests; smaller means
   finer progress, cheaper retries and less RAM in the browser (`chunk × connections`
   are held in memory while hashing).
 * **Parallel connections** (default 4). 3–6 usually saturates a home uplink; more
@@ -170,7 +173,8 @@ For Apache, `LimitRequestBody` (if set) must also exceed the chunk size.
 ## Notes
 
 * Cloudflare's per-request limit is 100 MB on Free/Pro plans (200 MB Business,
-  500 MB Enterprise). The 95 MB ceiling leaves room for multipart overhead.
+  500 MB Enterprise); set *Proxy request limit* to match. Chunks stay 5% under it to
+  leave room for multipart overhead.
 * Allowed file types and maximum file size follow core's
   `$conf['upload_form_all_types']`, `file_ext`/`picture_ext` and
   `$conf['upload_form_max_file_size']`. Videos need `upload_form_all_types = true`.

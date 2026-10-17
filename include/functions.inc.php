@@ -1,9 +1,21 @@
 <?php
 defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
 
-/** Hard ceiling for one chunk's file payload. Cloudflare's limit is 100 MB per
- *  request body (Free/Pro); we stay well clear to leave room for multipart overhead. */
-define('PU_HARD_MAX_CHUNK', 95 * 1000 * 1000);
+/**
+ * Largest chunk payload the reverse proxy will pass, in bytes: the proxy's
+ * request-body limit minus 5% for multipart framing and form fields.
+ * Cloudflare: 100 MB on Free/Pro, 200 MB Business, 500 MB Enterprise.
+ */
+function pu_proxy_max_chunk($cfg = null)
+{
+  if ($cfg === null) $cfg = pu_get_config();
+  return (int)floor(pu_proxy_limit_mb($cfg) * 1000000 * 0.95);
+}
+
+function pu_proxy_limit_mb($cfg)
+{
+  return max(10, min(5000, (int)$cfg['proxy_limit_mb']));
+}
 
 function pu_default_config()
 {
@@ -15,6 +27,7 @@ function pu_default_config()
     'stale_hours'     => 24,   // abandoned partial uploads are purged after this
     'replace_web_form'=> false,// hide core "Web Form" tab, Photos > Add opens Parallel Upload
     'speed_target_pct'=> 80,   // a user's stated upload speed is targeted at this percentage
+    'proxy_limit_mb'  => 100,  // request-body limit of the proxy in front (Cloudflare Free/Pro: 100)
   );
 }
 
@@ -43,7 +56,8 @@ function pu_save_config($cfg)
  */
 function pu_server_max_chunk()
 {
-  $limits = array('Proxy cap (95 MB)' => PU_HARD_MAX_CHUNK);
+  $cfg = pu_get_config();
+  $limits = array(sprintf('proxy limit %d MB, minus 5%%', pu_proxy_limit_mb($cfg)) => pu_proxy_max_chunk($cfg));
 
   $umf = pu_ini_bytes('upload_max_filesize');
   if ($umf > 0) $limits['PHP upload_max_filesize'] = $umf - 1024;
@@ -77,7 +91,7 @@ function pu_limit_warnings($cfg)
   $chunk = pu_effective_chunk_size();
   if ($chunk >= (int)round($cfg['chunk_size_mb'] * 1000000)) return array();
   return array(sprintf(
-    l10n('Chunks are capped at %s by %s (you asked for %s MB). Raise upload_max_filesize and post_max_size to about %d M in PHP, and client_max_body_size in nginx, to use bigger chunks.'),
+    l10n('Chunks are capped at %s by %s (you asked for %s MB). Raise upload_max_filesize and post_max_size to about %d M in PHP (and client_max_body_size in nginx), or re-run install.sh, which follows the proxy request limit.'),
     round($chunk / 1000000, 1).' MB', $why, $cfg['chunk_size_mb'], ceil($cfg['chunk_size_mb']) + 4
   ));
 }
@@ -87,7 +101,7 @@ function pu_effective_chunk_size()
 {
   $cfg = pu_get_config();
   list($max) = pu_server_max_chunk();
-  $want = (int)round(max(1, min(95, (float)$cfg['chunk_size_mb'])) * 1000 * 1000);
+  $want = (int)round(max(1, (float)$cfg['chunk_size_mb']) * 1000 * 1000);
   return max(256 * 1024, min($want, $max));
 }
 

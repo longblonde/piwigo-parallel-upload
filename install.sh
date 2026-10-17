@@ -11,7 +11,7 @@ set -euo pipefail
 REPO_URL="https://github.com/longblonde/piwigo-parallel-upload.git"
 REF="main"
 PIWIGO=""
-PHP_LIMIT_MB=100          # upload_max_filesize / post_max_size / client_max_body_size
+PHP_LIMIT_MB=""           # upload_max_filesize / post_max_size / client_max_body_size (default: plugin's proxy limit, else 100)
 DO_PHP=1
 DO_WEB=1
 DO_ACTIVATE=1
@@ -25,7 +25,8 @@ usage() {
 Usage: install.sh [options]
 
   --piwigo DIR          Piwigo root (auto-detected if omitted)
-  --limit MB            PHP + web server request size limit to ensure (default: $PHP_LIMIT_MB)
+  --limit MB            PHP + web server request size limit to ensure
+                        (default: the plugin's "Proxy request limit" setting, else 100)
   --no-php              don't touch PHP settings
   --no-webserver        don't touch nginx / apache settings
   --no-activate         copy files only; activate from Admin > Plugins yourself
@@ -64,7 +65,7 @@ c_warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
 die()    { printf '\033[31m✘ %s\033[0m\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "Run as root (sudo)."
-[[ "$PHP_LIMIT_MB" =~ ^[0-9]+$ ]] && [ "$PHP_LIMIT_MB" -ge 8 ] || die "--limit must be a number of MB (>= 8)."
+[ -z "$PHP_LIMIT_MB" ] || { [[ "$PHP_LIMIT_MB" =~ ^[0-9]+$ ]] && [ "$PHP_LIMIT_MB" -ge 8 ]; } || die "--limit must be a number of MB (>= 8)."
 
 # ---------------------------------------------------------------- locate Piwigo
 is_piwigo() { [ -f "$1/include/constants.php" ] && grep -q "PHPWG_VERSION" "$1/include/constants.php" 2>/dev/null; }
@@ -118,6 +119,32 @@ c_ok "Plugin files: $DEST (version $PLUGIN_VERSION, commit $(g rev-parse --short
 
 RELOAD=()
 
+# ---------------------------------------------------------------- request size to allow
+# Follow the plugin's "Proxy request limit" (Cloudflare Free/Pro: 100 MB) unless --limit was given.
+if [ -z "$PHP_LIMIT_MB" ]; then
+  PHP_LIMIT_MB=100
+  if command -v php >/dev/null; then
+    cfg_limit=$(php -r '
+      $conf = array(); $prefixeTable = "piwigo_"; define("PHPWG_ROOT_PATH", $argv[1]."/");
+      @include $argv[1]."/local/config/database.inc.php";
+      if (empty($conf["db_host"])) exit;
+      $h = $conf["db_host"]; $port = null; $sock = null;
+      if (strpos($h, ":") !== false) { list($h, $x) = explode(":", $h, 2); if (ctype_digit($x)) $port = (int)$x; else $sock = $x; }
+      mysqli_report(MYSQLI_REPORT_OFF);
+      $db = @new mysqli($h, $conf["db_user"], $conf["db_password"], $conf["db_base"], $port, $sock);
+      if ($db->connect_errno) exit;
+      $r = $db->query("SELECT value FROM {$prefixeTable}config WHERE param = \"parallel_upload\"");
+      $row = $r ? $r->fetch_assoc() : null;
+      $c = $row ? json_decode($row["value"], true) : null;
+      if (!empty($c["proxy_limit_mb"])) echo (int)$c["proxy_limit_mb"];
+    ' "$PIWIGO" 2>/dev/null || true)
+    if [[ "$cfg_limit" =~ ^[0-9]+$ ]] && [ "$cfg_limit" -gt "$PHP_LIMIT_MB" ]; then
+      PHP_LIMIT_MB=$cfg_limit
+      c_info "Using the plugin's proxy request limit: ${PHP_LIMIT_MB} MB"
+    fi
+  fi
+fi
+
 # ---------------------------------------------------------------- PHP limits
 to_mb() {   # "100M" / "2G" / "512K" / "104857600" -> MB (integer, rounded down)
   local v="${1^^}"; v="${v// /}"
@@ -151,40 +178,64 @@ if [ "$DO_PHP" -eq 1 ]; then
   for d in "${confdirs[@]}"; do
     [ -d "$d" ] || continue
     ini="$d/99-parallel-upload.ini"
-    # current effective values for this SAPI (ignoring our own file)
-    phpbin=""
-    if [[ "$d" =~ /etc/php/([0-9.]+)/ ]]; then
-      v="${BASH_REMATCH[1]}"
-      if [[ "$d" == */fpm/* ]]; then phpbin=$(command -v "php-fpm$v" || true)
-      else phpbin=$(command -v "php$v" || true); fi
+    # Effective values for this SAPI without our own file: its php.ini, then
+    # conf.d/*.ini in load order (later wins). FPM pool overrides are checked below.
+    inis=()
+    [ -f "$(dirname "$d")/php.ini" ] && inis+=("$(dirname "$d")/php.ini")
+    for f in "$d"/*.ini; do [ -f "$f" ] && [ "$f" != "$ini" ] && inis+=("$f"); done
+    ini_get() {   # last value of a key across the files, empty if never set
+      local key="$1" f v out=""
+      for f in "${inis[@]}"; do
+        v=$(sed -nE "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"?([^\";[:space:]]*)\"?.*/\1/p" "$f" | tail -n 1)
+        [ -n "$v" ] && out="$v"
+      done
+      echo "$out"
+    }
+    cur_up=$(to_mb "$(ini_get upload_max_filesize)")
+    cur_post=$(to_mb "$(ini_get post_max_size)")
+    cur_exec=$(ini_get max_execution_time)
+    cur_input=$(ini_get max_input_time)
+
+    # write only what has to go up; never touch a value that is already higher or unlimited
+    lines=(); summary=()
+    if [ "$cur_up" -lt "$PHP_LIMIT_MB" ]; then
+      lines+=("upload_max_filesize = ${PHP_LIMIT_MB}M"); summary+=("upload_max_filesize ${cur_up}M→${PHP_LIMIT_MB}M")
     fi
-    cur_up=0; cur_post=0
-    if [ -n "$phpbin" ]; then
-      mv -f "$ini" "$ini.off" 2>/dev/null || true
-      if [[ "$phpbin" == *php-fpm* ]]; then
-        cur_up=$(to_mb "$("$phpbin" -i 2>/dev/null | sed -n 's/^upload_max_filesize => \([^ ]*\).*/\1/p' | head -1)")
-        cur_post=$(to_mb "$("$phpbin" -i 2>/dev/null | sed -n 's/^post_max_size => \([^ ]*\).*/\1/p' | head -1)")
+    # post_max_size 0 means unlimited
+    if [ "$(ini_get post_max_size)" != "0" ] && [ "$cur_post" -lt "$PHP_LIMIT_MB" ]; then
+      lines+=("post_max_size = ${PHP_LIMIT_MB}M"); summary+=("post_max_size ${cur_post}M→${PHP_LIMIT_MB}M")
+    fi
+    # max_execution_time: 0 = unlimited (PHP's default when unset is 30)
+    exec_now=${cur_exec:-30}
+    if [[ "$exec_now" =~ ^[0-9]+$ ]] && [ "$exec_now" -ne 0 ] && [ "$exec_now" -lt 300 ]; then
+      lines+=("max_execution_time = 300"); summary+=("max_execution_time ${exec_now}→300")
+    fi
+    # max_input_time: -1 = same as max_execution_time, 0 = unlimited (default when unset is -1)
+    input_now=${cur_input:--1}
+    if [[ "$input_now" =~ ^[0-9]+$ ]] && [ "$input_now" -ne 0 ] && [ "$input_now" -lt 300 ]; then
+      lines+=("max_input_time = 300"); summary+=("max_input_time ${input_now}→300")
+    fi
+
+    if [ ${#lines[@]} -eq 0 ]; then
+      if [ -f "$ini" ]; then
+        rm -f "$ini"
+        c_ok "PHP ($d): existing limits are already high enough; removed $ini"
+      else
+        c_ok "PHP ($d): existing limits are already high enough; nothing written"
+        continue
       fi
-      mv -f "$ini.off" "$ini" 2>/dev/null || true
+    else
+      { echo "; Written by Parallel Upload installer: only settings that were lower than needed."
+        echo "; Delete this file to undo."
+        printf '%s\n' "${lines[@]}"; } > "$ini.new"
+      if cmp -s "$ini.new" "$ini"; then
+        rm -f "$ini.new"
+        c_ok "PHP: $ini already in place"
+        continue
+      fi
+      mv -f "$ini.new" "$ini"
+      c_ok "PHP: $ini ($(IFS=,; echo "${summary[*]}" | sed 's/,/, /g'))"
     fi
-    up=$PHP_LIMIT_MB; post=$PHP_LIMIT_MB
-    [ "$cur_up" -gt "$up" ] && up=$cur_up
-    [ "$cur_post" -gt "$post" ] && post=$cur_post
-    cat > "$ini.new" <<EOF
-; Written by Parallel Upload installer - request size for upload chunks.
-; Only ever raises limits; delete this file to undo.
-upload_max_filesize = ${up}M
-post_max_size = ${post}M
-max_execution_time = 300
-max_input_time = 300
-EOF
-    if cmp -s "$ini.new" "$ini"; then
-      rm -f "$ini.new"
-      c_ok "PHP: $ini already in place (upload_max_filesize=${up}M post_max_size=${post}M)"
-      continue
-    fi
-    mv -f "$ini.new" "$ini"
-    c_ok "PHP: $ini (upload_max_filesize=${up}M post_max_size=${post}M)"
     [[ "$d" =~ /etc/php/([0-9.]+)/fpm/ ]] && RELOAD+=("php${BASH_REMATCH[1]}-fpm")
     [[ "$d" == */apache2/* ]] && RELOAD+=("apache2")
     [[ "$d" =~ ^/etc/php([0-9]+)/conf.d ]] && RELOAD+=("php-fpm${BASH_REMATCH[1]}")

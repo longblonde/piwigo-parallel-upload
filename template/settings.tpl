@@ -13,9 +13,13 @@
   <form method="post" action="{$PU_SETTINGS_URL}" class="pu-card pu-settings">
       <input type="hidden" name="pwg_token" value="{$PU_TOKEN}">
       <div class="pu-grid">
+        <label>{'Proxy request limit'|translate} (MB)
+          <input type="number" name="proxy_limit_mb" min="10" max="5000" step="1" value="{$PU_CFG.proxy_limit_mb}">
+          <small>{'Largest request the proxy in front of Piwigo accepts. Cloudflare: 100 on Free/Pro, 200 Business, 500 Enterprise. Chunks stay 5% under it.'|translate}</small>
+        </label>
         <label>{'Max chunk size'|translate} (MB)
-          <input type="number" name="chunk_size_mb" min="1" max="95" step="1" value="{$PU_CFG.chunk_size_mb}">
-          <small>{'Used as-is when no upload speed is entered, and as the ceiling when one is. Cloudflare rejects request bodies over 100 MB; 95 is the hard limit.'|translate}</small>
+          <input type="number" name="chunk_size_mb" min="1" max="{$PU_PROXY_MAX_MB}" step="1" value="{$PU_CFG.chunk_size_mb}">
+          <small>{'Used as-is when no upload speed is entered, and as the ceiling when one is. At most %d with the current proxy limit.'|translate|sprintf:$PU_PROXY_MAX_MB}</small>
         </label>
         <label>{'Max parallel connections'|translate}
           <input type="number" name="concurrency" min="1" max="16" value="{$PU_CFG.concurrency}">
@@ -48,19 +52,6 @@
         <tr><th>max_execution_time</th><td>{$PU_INI.max_execution_time}</td>
             <th>memory_limit</th><td>{$PU_INI.memory_limit}</td></tr>
         <tr><th>{'Effective chunk'|translate}</th><td colspan="3">{($PU_CHUNK/1000000)|string_format:"%.1f"} MB ({'tightest limit'|translate}: {$PU_SERVER_WHY})</td></tr>
-        <tr><th>{'PHP workers'|translate}</th><td colspan="3">
-          {if $PU_FPM.limit}
-            <b>{$PU_FPM.label}</b>
-            {if $PU_FPM.type == 'fpm'} · {'pool'|translate} <b>{$PU_FPM.pool|default:'?'}</b> · pm = {$PU_FPM.pm|default:'dynamic'}{/if}
-            {if $PU_FPM.type == 'apache' && $PU_FPM.mpm} · mpm_{$PU_FPM.mpm}{/if}
-            · {$PU_FPM.setting} = <b class="{if $PU_FPM.limit < $PU_FPM_NEEDED}pu-bad{else}pu-good{/if}">{$PU_FPM.limit}</b>
-            ({'needs'|translate} {$PU_FPM_NEEDED} {'for'|translate} {$PU_CFG.concurrency} {'connections'|translate})
-            {if $PU_FPM.running !== null} · {$PU_FPM.running} {'workers running now'|translate}{/if}
-            <br><small class="pu-src">{$PU_FPM.source}</small>
-          {else}
-            <span class="pu-dim">{$PU_FPM.error}</span>
-          {/if}
-        </td></tr>
         <tr><th>{'Buffer'|translate}</th><td colspan="3">{$PU_BUF_COUNT} {'partial uploads'|translate}, {($PU_BUF_BYTES/1048576)|string_format:"%.0f"} MB {'reserved'|translate}</td></tr>
       </table>
 

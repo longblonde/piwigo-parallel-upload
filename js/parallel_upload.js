@@ -1,8 +1,8 @@
 /*
  * Parallel Upload for Piwigo - browser side.
  *
- * Every file is cut into fixed-size chunks (≤ 95 MB, so each HTTP request
- * stays under Cloudflare Tunnel's 100 MB body limit). A single pool of N
+ * Every file is cut into fixed-size chunks that stay 5% under the proxy's
+ * request-body limit (Cloudflare Tunnel: 100 MB on Free/Pro). A single pool of N
  * workers pulls chunks across all files - oldest file first - and posts them
  * to pu.upload.chunk, which writes each one straight to its byte offset on
  * the server. Order doesn't matter; a failed chunk is simply re-sent.
