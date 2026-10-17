@@ -156,3 +156,109 @@ function pu_buffer_usage()
   }
   return array($count, $bytes);
 }
+
+/**
+ * What PHP-FPM allows for the pool serving this request.
+ * Every chunk in flight occupies one worker, so pm.max_children has to be
+ * comfortably above "Max parallel connections".
+ *
+ * @return array  sapi, pool, pm, max_children, source (file:line), running, conf, error
+ */
+function pu_fpm_info()
+{
+  $info = array('sapi' => PHP_SAPI, 'pool' => null, 'pm' => null, 'max_children' => null,
+                'source' => null, 'running' => null, 'conf' => null, 'error' => null);
+  if (PHP_SAPI != 'fpm-fcgi')
+  {
+    $info['error'] = 'PHP is not running under PHP-FPM ('.PHP_SAPI.')';
+    return $info;
+  }
+
+  // worker process title: "php-fpm: pool www"
+  $self = @file_get_contents('/proc/self/cmdline');
+  if ($self && preg_match('/php-fpm: pool (\S+)/', str_replace("\0", ' ', $self), $m))
+  {
+    $info['pool'] = $m[1];
+  }
+
+  // master process title: "php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)"
+  $stat = @file_get_contents('/proc/self/stat');
+  if ($stat && preg_match('/^\d+ \(.*?\) \S (\d+)/', $stat, $m))
+  {
+    $mcmd = @file_get_contents('/proc/'.$m[1].'/cmdline');
+    if ($mcmd && preg_match('/master process \(([^)]+)\)/', str_replace("\0", ' ', $mcmd), $mm))
+    {
+      $info['conf'] = $mm[1];
+    }
+  }
+  if (!$info['conf'])
+  {
+    $ini = php_ini_loaded_file();
+    $candidates = array();
+    if ($ini) $candidates[] = dirname($ini).'/php-fpm.conf';
+    $candidates = array_merge($candidates, array('/usr/local/etc/php-fpm.conf'),
+      glob('/etc/php/*/fpm/php-fpm.conf') ?: array(), glob('/etc/php*/php-fpm.conf') ?: array());
+    foreach ($candidates as $c) { if (@is_readable($c)) { $info['conf'] = $c; break; } }
+  }
+  if (!$info['conf'] || !@is_readable($info['conf']))
+  {
+    $info['error'] = 'Could not find or read php-fpm.conf'.(ini_get('open_basedir') ? ' (open_basedir is set)' : '');
+    return $info;
+  }
+
+  // files in the order PHP-FPM reads them: main file, then each include glob
+  $files = array($info['conf']);
+  foreach (@file($info['conf']) ?: array() as $line)
+  {
+    if (preg_match('/^\s*include\s*=\s*(.+?)\s*$/', $line, $m))
+    {
+      $pattern = $m[1];
+      if ($pattern[0] != '/') $pattern = dirname($info['conf']).'/'.$pattern;
+      foreach (glob($pattern) ?: array() as $f) $files[] = $f;
+    }
+  }
+
+  // later definitions override earlier ones, also across files with the same [pool]
+  $section = null;
+  foreach ($files as $f)
+  {
+    $lines = @file($f);
+    if ($lines === false) continue;
+    foreach ($lines as $n => $line)
+    {
+      $line = trim($line);
+      if ($line === '' || $line[0] == ';' || $line[0] == '#') continue;
+      if (preg_match('/^\[(.+)\]$/', $line, $m)) { $section = $m[1]; continue; }
+      if ($info['pool'] !== null && $section !== $info['pool']) continue;
+      if (preg_match('/^pm\s*=\s*(\w+)/', $line, $m)) $info['pm'] = $m[1];
+      if (preg_match('/^pm\.max_children\s*=\s*(\d+)/', $line, $m))
+      {
+        $info['max_children'] = (int)$m[1];
+        $info['source'] = $f.':'.($n + 1);
+      }
+    }
+  }
+  if ($info['max_children'] === null && !$info['error'])
+  {
+    $info['error'] = 'pm.max_children not found in '.implode(', ', $files);
+  }
+
+  // workers alive right now for this pool
+  if ($info['pool'] !== null && @is_dir('/proc'))
+  {
+    $running = 0;
+    foreach (glob('/proc/[0-9]*', GLOB_ONLYDIR) ?: array() as $p)
+    {
+      $c = @file_get_contents($p.'/cmdline');
+      if ($c && strpos($c, 'php-fpm: pool '.$info['pool']) === 0) $running++;
+    }
+    $info['running'] = $running;
+  }
+  return $info;
+}
+
+/** Workers the plugin needs: one per parallel chunk, plus room for page loads and the finish step. */
+function pu_fpm_needed($cfg)
+{
+  return (int)$cfg['concurrency'] + 2;
+}

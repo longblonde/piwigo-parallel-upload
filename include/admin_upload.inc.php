@@ -31,7 +31,13 @@ foreach ($cats as $c)
 $album_id = '';
 if (isset($_GET['album']) && isset($album_names[(int)$_GET['album']])) $album_id = (int)$_GET['album'];
 
+// never open more parallel chunks than PHP-FPM has workers for (keep 2 for pages/finish)
+$max_conc = (int)$cfg['concurrency'];
+$fpm = pu_fpm_info();
+if ($fpm['max_children'] !== null) $max_conc = max(1, min($max_conc, $fpm['max_children'] - 2));
+
 $template->assign(array(
+  'PU_MAX_CONC'      => $max_conc,
   'PU_CFG'           => $cfg,
   'PU_ALBUM_NAMES'   => (object)$album_names,
   'PU_ALBUM_ID'      => $album_id,

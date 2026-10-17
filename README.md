@@ -105,6 +105,10 @@ With the out-of-the-box ceilings (4 connections, 32 MB) anything above ~250 Mbps
 capped at 4 × 32 MB; raise both in the settings for faster lines. Every chunk in
 flight occupies one PHP-FPM worker, so `pm.max_children` must be at least
 connections + 2 (Debian's default is 5) — the installer warns when it's lower.
+The settings page shows the live value (pool, `pm`, `pm.max_children`, the file it
+comes from and how many workers are running), warns when it's too low for *Max
+parallel connections*, and the uploader never opens more chunks than
+`pm.max_children − 2` whatever the settings say.
 
 ## Choosing an album
 

@@ -202,3 +202,8 @@
 .pu-plan-note { color: var(--pu-retry); }
 .pu-plan-text a { color: var(--pu-dim); text-decoration: underline; }
 .pu-plan-text b { white-space: nowrap; }
+
+.pu-ini td { vertical-align: top; }
+.pu-ini .pu-good { color: var(--pu-done); }
+.pu-ini .pu-bad { color: var(--pu-error); }
+.pu-ini .pu-src, .pu-ini .pu-dim { color: var(--pu-dim); font-family: monospace; font-size: 11px; }

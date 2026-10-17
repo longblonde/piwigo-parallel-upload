@@ -36,12 +36,25 @@ $cfg = pu_get_config();
 list($server_max, $server_max_why) = pu_server_max_chunk();
 list($buf_count, $buf_bytes) = pu_buffer_usage();
 
+$warnings = pu_limit_warnings($cfg);
+$fpm = pu_fpm_info();
+if ($fpm['max_children'] !== null && $fpm['max_children'] < pu_fpm_needed($cfg))
+{
+  $warnings[] = sprintf(
+    l10n('PHP-FPM pool "%s" allows only %d workers (pm.max_children), but %d parallel connections need about %d. Uploads will queue and other admin pages will stall. Raise pm.max_children to %d or more in %s and restart PHP-FPM, or lower Max parallel connections to %d.'),
+    $fpm['pool'], $fpm['max_children'], $cfg['concurrency'], pu_fpm_needed($cfg),
+    max(10, pu_fpm_needed($cfg)), preg_replace('/:\d+$/', '', $fpm['source']), max(1, $fpm['max_children'] - 2)
+  );
+}
+
 $template->assign(array(
   'PU_CFG'          => $cfg,
   'PU_CHUNK'        => pu_effective_chunk_size(),
   'PU_SERVER_MAX'   => $server_max,
   'PU_SERVER_WHY'   => $server_max_why,
-  'PU_WARNINGS'     => pu_limit_warnings($cfg),
+  'PU_WARNINGS'     => $warnings,
+  'PU_FPM'          => $fpm,
+  'PU_FPM_NEEDED'   => pu_fpm_needed($cfg),
   'PU_TOKEN'        => get_pwg_token(),
   'PU_PATH'         => get_root_url().'plugins/'.PU_ID.'/',
   'PU_SETTINGS_URL' => PU_SETTINGS_URL,

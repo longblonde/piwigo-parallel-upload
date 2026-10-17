@@ -10,7 +10,7 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
 <div id="pu-app" class="pu{if $themeconf.colorscheme == 'dark'} pu-dark{/if}"
   data-token="{$PU_TOKEN}"
   data-chunk="{$PU_CHUNK}"
-  data-concurrency="{$PU_CFG.concurrency}"
+  data-concurrency="{$PU_MAX_CONC}"
   data-mbps="{$PU_USER_MBPS}"
   data-target-pct="{$PU_CFG.speed_target_pct}"
   data-can-configure="{if $PU_CAN_CONFIGURE}1{else}0{/if}"
