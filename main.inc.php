@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Parallel Upload
-Version: 1.5.1
+Version: 1.5.2
 Description: Upload large files in parallel chunks sized to fit under a reverse-proxy request cap (Cloudflare Tunnel: 100 MB), with a live per-file / per-chunk progress dashboard and time remaining.
 Plugin URI: https://gray-think.com
 Author: Gray-Think (Daniel Wald)

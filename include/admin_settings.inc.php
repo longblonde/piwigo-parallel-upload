@@ -62,7 +62,23 @@ if ($fpm['limit'] !== null && $fpm['limit'] < pu_fpm_needed($cfg))
   );
 }
 
+// Helper text for "Max parallel connections", matched to what this server is.
+//   ok      : the server allows at least the current setting -> not a bottleneck, say so calmly
+//   tight   : the server allows fewer than the current setting -> it is the bottleneck
+//   unknown : couldn't tell -> list the usual limits
+$conc_max_server = $fpm['limit'] !== null ? max(1, $fpm['limit'] - 2) : null;
+$conc_state = $fpm['limit'] === null ? 'unknown' : ($conc_max_server >= (int)$cfg['concurrency'] ? 'ok' : 'tight');
+
 $template->assign(array(
+  'PU_CONC'         => array(
+    'state'      => $conc_state,
+    'label'      => $fpm['label'],
+    'setting'    => $fpm['setting'],
+    'limit'      => $fpm['limit'],
+    'max'        => $conc_max_server,
+    'type'       => $fpm['type'],
+    'input_max'  => $conc_max_server !== null ? max(1, min(16, $conc_max_server)) : 16,
+  ),
   'PU_CFG'          => $cfg,
   'PU_CHUNK'        => pu_effective_chunk_size(),
   'PU_SERVER_MAX'   => $server_max,

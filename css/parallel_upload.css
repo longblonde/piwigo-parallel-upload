@@ -207,3 +207,17 @@
 .pu-ini .pu-good { color: var(--pu-done); }
 .pu-ini .pu-bad { color: var(--pu-error); }
 .pu-ini .pu-src, .pu-ini .pu-dim { color: var(--pu-dim); font-family: monospace; font-size: 11px; }
+
+/* ---------------------------------------------------- connection-limit hints */
+.pu-grid small.pu-hint-ok { color: var(--pu-done); }
+.pu-grid small.pu-hint-tight { color: var(--pu-retry); }
+.pu-dark .pu-grid small.pu-hint-tight { color: #f0d58a; }
+.pu-limits { font-weight: 400; margin-top: 2px; }
+.pu-limits summary { cursor: pointer; color: var(--pu-dim); font-size: 11.5px; }
+.pu-limits table { border-collapse: collapse; font-size: 11.5px; margin: 6px 0 2px; }
+.pu-limits th, .pu-limits td { text-align: left; padding: 2px 10px 2px 0; color: var(--pu-dim); font-weight: 400; white-space: nowrap; }
+.pu-limits th { color: var(--pu-text); font-weight: 600; }
+.pu-limits td:last-child { font-family: monospace; font-size: 10.5px; white-space: normal; }
+.pu-limits tr.pu-this th, .pu-limits tr.pu-this td { color: var(--pu-accent); }
+@media (min-width: 760px) { .pu-grid .pu-span2 { grid-column: span 2; } }
+.pu-grid .pu-span2 input { align-self: flex-start; }

@@ -22,9 +22,25 @@
           <input type="number" name="chunk_size_mb" min="1" max="{$PU_PROXY_MAX_MB}" step="1" value="{$PU_CFG.chunk_size_mb}">
           <small>{'Used as-is when no upload speed is entered, and as the ceiling when one is. At most %d with the current proxy limit.'|translate|sprintf:$PU_PROXY_MAX_MB}</small>
         </label>
-        <label>{'Max parallel connections'|translate}
-          <input type="number" name="concurrency" min="1" max="16" value="{$PU_CFG.concurrency}">
-          <small>{'Ceiling for chunks in flight at once. Keep it below PHP-FPM pm.max_children (Debian default 5) minus one or two for page loads.'|translate}</small>
+        <label class="pu-span2">{'Max parallel connections'|translate}
+          <input type="number" name="concurrency" min="1" max="{$PU_CONC.input_max}" value="{$PU_CFG.concurrency}">
+          <small>{'Each connection carries roughly 60 Mbps through a tunnel: 4 ≈ 250 Mbps, 8 ≈ 500 Mbps. Going higher than the upload link needs does not help.'|translate}</small>
+          {if $PU_CONC.state == 'ok'}
+            <small class="pu-hint-ok">{$PU_CONC.label} ({$PU_CONC.setting} = {$PU_CONC.limit}) {'allows up to'|translate} {if $PU_CONC.max >= 16}16{else}{$PU_CONC.max}{/if} {'here, so it is not a limit at this setting. Your upload speed is.'|translate}</small>
+          {elseif $PU_CONC.state == 'tight'}
+            <small class="pu-hint-tight">{$PU_CONC.label}: {$PU_CONC.setting} = {$PU_CONC.limit}, {'so up to'|translate} <b>{$PU_CONC.max}</b> {'here (two workers stay free for page loads and finishing uploads). Raise'|translate} {$PU_CONC.setting} {'to go further.'|translate}</small>
+          {else}
+            <small>{'Every connection also takes one PHP worker; keep this at least 2 under the server\'s limit:'|translate}</small>
+          {/if}
+          <details class="pu-limits"{if $PU_CONC.state == 'unknown'} open{/if}>
+            <summary>{'Server limits by setup'|translate}</summary>
+            <table>
+              <tr{if $PU_CONC.type == 'apache'} class="pu-this"{/if}><th>Apache + mod_php</th><td>MaxRequestWorkers</td><td>{'Debian default'|translate} 150</td><td>/etc/apache2/mods-enabled/mpm_prefork.conf</td></tr>
+              <tr{if $PU_CONC.type == 'fpm'} class="pu-this"{/if}><th>PHP-FPM</th><td>pm.max_children</td><td>{'Debian default'|translate} 5</td><td>/etc/php/8.x/fpm/pool.d/www.conf</td></tr>
+              <tr><th>{'Proxy / tunnel'|translate}</th><td>—</td><td>{'no connection limit'|translate}</td><td>{'limits request size, see above'|translate}</td></tr>
+            </table>
+            {if $PU_CONC.type == 'fpm' || $PU_CONC.type == 'apache'}<small>{'Highlighted: this server.'|translate}</small>{/if}
+          </details>
         </label>
         <label>{'Retries per chunk'|translate}
           <input type="number" name="max_retries" min="0" max="20" value="{$PU_CFG.max_retries}">
