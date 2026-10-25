@@ -123,7 +123,7 @@ function pu_allowed_exts()
 function pu_rrmdir($dir)
 {
   if (!is_dir($dir)) return;
-  foreach (scandir($dir) as $f)
+  foreach (@scandir($dir) ?: array() as $f)
   {
     if ($f == '.' || $f == '..') continue;
     $p = $dir.'/'.$f;
@@ -139,13 +139,30 @@ function pu_cleanup_stale()
   $base = pu_buffer_dir();
   if (!is_dir($base)) return 0;
   $limit = time() - max(1, (int)$cfg['stale_hours']) * 3600;
+
+  // Several files start at once (one request each), and each used to scan and
+  // delete in parallel: one request removed a folder while another was reading
+  // it. Now only one request cleans at a time, and only every 10 minutes.
+  $lock = $base.'/.cleanup.lock';
+  $lf = @fopen($lock, 'c');
+  if (!$lf) return 0;
+  if (!flock($lf, LOCK_EX | LOCK_NB)) { fclose($lf); return 0; }   // another request is on it
+  clearstatcache(true, $lock);
+  $ran = @filemtime($lock);
+  if ($ran && $ran > time() - 600 && @filesize($lock) > 0) { flock($lf, LOCK_UN); fclose($lf); return 0; }
+  ftruncate($lf, 0); fwrite($lf, (string)time()); fflush($lf);
+  @touch($lock);
+
   $n = 0;
   foreach (glob($base.'/pu_*', GLOB_ONLYDIR) ?: array() as $dir)
   {
+    clearstatcache();
     $last = @filemtime($dir);
+    if ($last === false) continue;                       // already gone
     foreach (array('meta.json', 'data.part', 'result.json') as $f)
     {
-      if (file_exists($dir.'/'.$f)) $last = max($last, filemtime($dir.'/'.$f));
+      $t = @filemtime($dir.'/'.$f);
+      if ($t !== false) $last = max($last, $t);
     }
     if ($last < $limit)
     {
@@ -153,6 +170,8 @@ function pu_cleanup_stale()
       $n++;
     }
   }
+  flock($lf, LOCK_UN);
+  fclose($lf);
   return $n;
 }
 

@@ -76,19 +76,24 @@
       // network failures, proxy errors, server errors, checksum mismatch
       if (!this.http) return true;
       if ([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530].includes(this.http)) return true;
-      return this.code === 422 || this.code === 500;
+      return this.code === 422 || this.code === 500 || this.code === 'garbled';
     }
   }
 
   function parseResponse(http, text) {
     let j = null;
-    try { j = JSON.parse(text); } catch (e) { /* not JSON */ }
+    try { j = JSON.parse(text); } catch (e) {
+      // a PHP notice printed in front of the answer (display_errors = On): use the JSON after it
+      const at = (text || '').lastIndexOf('{"stat":');
+      if (at > 0) { try { j = JSON.parse(text.slice(at)); } catch (e2) { /* still not JSON */ } }
+    }
     if (j && j.stat === 'ok') return j.result;
     if (j && j.stat === 'fail') throw new ApiError(j.message, j.err, http);
     if (http === 413) throw new ApiError('Request too large for the proxy/web server (HTTP 413). Lower the chunk size.', 413, 413);
     if (http === 524) throw new ApiError('Proxy timeout (HTTP 524)', 524, 524);
     const snippet = (text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-    throw new ApiError(`HTTP ${http || 'network error'}${snippet ? ': ' + snippet : ''}`, http, http);
+    // HTTP 200 without a readable answer is a server hiccup, not a refusal: worth a retry
+    throw new ApiError(`HTTP ${http || 'network error'}${snippet ? ': ' + snippet : ''}`, http === 200 ? 'garbled' : http, http);
   }
 
   async function ws(method, params) {
@@ -446,6 +451,17 @@
     render(true);
   }
 
+  // A failed file starts over as a new upload (the server already discarded its partial).
+  function retryJob(f) {
+    if (f.state !== 'error') return;
+    f.split(CFG.chunk);
+    f.state = 'queued'; f.err = ''; f.uploadId = null; f.initAttempts = 0; f.result = null; f.rate = 0;
+    const old = f.el; old.replaceWith(buildRow(f));
+    $('pu-results').hidden = true;
+    if (S.running && !S.paused) pump();
+    render(true);
+  }
+
   function removeJob(f) {
     if (f.open) {
       if (f.state === 'processing' || f.state === 'finishing') return;
@@ -503,6 +519,7 @@
         <span class="pu-f-size">${fmtBytes(f.size)}</span>
         <span class="pu-f-state"></span>
         <span class="pu-f-pct"></span>
+        <button type="button" class="pu-f-retry" title="Retry this file" hidden>↻ Retry</button>
         <button type="button" class="pu-f-x" title="Remove">×</button>
       </div>
       <div class="pu-f-meta">
@@ -515,12 +532,13 @@
       </div>
       <div class="pu-f-live"></div>`;
     li.querySelector('.pu-f-x').addEventListener('click', () => removeJob(f));
+    li.querySelector('.pu-f-retry').addEventListener('click', () => retryJob(f));
     f.el = li;
     f.segEls = Array.from(li.querySelectorAll('.pu-seg'));
     f.ref = {
       state: li.querySelector('.pu-f-state'), pct: li.querySelector('.pu-f-pct'),
       rate: li.querySelector('.pu-f-rate'), eta: li.querySelector('.pu-f-eta'),
-      live: li.querySelector('.pu-f-live'), x: li.querySelector('.pu-f-x'),
+      live: li.querySelector('.pu-f-live'), x: li.querySelector('.pu-f-x'), retry: li.querySelector('.pu-f-retry'),
     };
     f.lastRender = '';
     return li;
@@ -641,6 +659,7 @@
     r.state.textContent = waiting ? (S.paused ? 'Paused' : 'Waiting for a slot') : (STATE_LABEL[f.state] || f.state);
     r.pct.textContent = Math.floor((sent / f.size) * 100) + '%';
     r.x.hidden = f.state === 'finishing' || f.state === 'processing';
+    r.retry.hidden = f.state !== 'error';
 
     if (f.state === 'uploading') {
       const remain = f.size - sent;

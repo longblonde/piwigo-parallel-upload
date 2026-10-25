@@ -221,3 +221,6 @@
 .pu-limits tr.pu-this th, .pu-limits tr.pu-this td { color: var(--pu-accent); }
 @media (min-width: 760px) { .pu-grid .pu-span2 { grid-column: span 2; } }
 .pu-grid .pu-span2 input { align-self: flex-start; }
+
+.pu-f-retry { flex: none; border: 1px solid var(--pu-line); background: var(--pu-bg2); color: var(--pu-text); font-size: 11px; border-radius: 10px; padding: 1px 8px; cursor: pointer; }
+.pu-f-retry:hover { border-color: var(--pu-accent); color: var(--pu-accent); }

@@ -60,6 +60,11 @@ function pu_ws_add_methods($arr)
 
 function pu_check_token($params)
 {
+  // With display_errors on, any PHP notice is printed in front of the JSON and
+  // the browser can't read the answer. Log them instead; core's own error page
+  // handling is unaffected because this only runs inside pu.upload.* calls.
+  @ini_set('display_errors', '0');
+  @ini_set('log_errors', '1');
   return get_pwg_token() == $params['pwg_token'];
 }
 
