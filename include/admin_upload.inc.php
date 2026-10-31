@@ -37,6 +37,8 @@ $workers = pu_server_workers();
 if ($workers['limit'] !== null) $max_conc = max(1, min($max_conc, $workers['limit'] - 2));
 
 $template->assign(array(
+  'PU_MODE'          => 'admin',
+  'PU_MAX_OPEN'      => 0,
   'PU_MAX_CONC'      => $max_conc,
   'PU_CFG'           => $cfg,
   'PU_ALBUM_NAMES'   => (object)$album_names,

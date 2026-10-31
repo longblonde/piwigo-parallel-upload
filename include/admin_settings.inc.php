@@ -34,6 +34,11 @@ if (isset($_POST['pu_save']))
     'speed_target_pct' => $num('speed_target_pct', 10, 100),
     'verify_sha256'    => $box('verify_sha256'),
     'replace_web_form' => $box('replace_web_form'),
+    'community_mode'   => (isset($_POST['community_mode']) && in_array($_POST['community_mode'], array('off', 'tab', 'replace'))) ? $_POST['community_mode'] : $cur['community_mode'],
+    'community_max_file_mb'     => $num('community_max_file_mb', 0, 1000000),
+    'community_max_open'        => $num('community_max_open', 1, 20),
+    'community_max_reserved_gb' => $num('community_max_reserved_gb', 1, 10000),
+    'community_concurrency'     => $num('community_concurrency', 1, 16),
   ));
   $page['infos'][] = l10n('Settings saved');
 }
@@ -80,6 +85,8 @@ $template->assign(array(
     'input_max'  => $conc_max_server !== null ? max(1, min(16, $conc_max_server)) : 16,
   ),
   'PU_CFG'          => $cfg,
+  'PU_COMMUNITY_AVAILABLE' => pu_community_available(),
+  'PU_GALLERY_MAX_MB'      => (int)$conf['upload_form_max_file_size'],
   'PU_CHUNK'        => pu_effective_chunk_size(),
   'PU_SERVER_MAX'   => $server_max,
   'PU_SERVER_WHY'   => $server_max_why,

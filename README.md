@@ -112,6 +112,39 @@ shows whichever applies (PHP-FPM pool and `pm.max_children`, or Apache's MPM and
 parallel connections*, and the uploader never opens more chunks than
 that limit − 2 whatever the settings say.
 
+## Community plugin users
+
+With the [Community](https://piwigo.org/ext/extension_view.php?eid=303) plugin active,
+registered users it lets upload can use Parallel Upload too, without being
+administrators. Settings → **Community users**:
+
+* **Off**: administrators only (default).
+* **Add a "Parallel Upload" tab** next to Community's own uploader on the public
+  *Upload Photos* page (`index.php?/parallel_upload`).
+* **Replace Community's uploader**: its *Upload Photos* link opens Parallel Upload.
+  Guests can then no longer upload through Community either.
+
+What Community users get, and don't:
+
+* **Rights are Community's.** The album list holds only the albums Community allows
+  them, and every upload call checks this again on the server, including when an
+  upload finishes (rights removed mid-upload are honoured). New albums can be created
+  only where Community allows sub-albums.
+* **Moderation is Community's.** Photos are stored hidden (level 16) and get a
+  Community pending entry, unless the user has an unmoderated permission on the album
+  or a parent, exactly as Community's own uploader decides. Admins approve them on
+  Community's *Pending* page and receive Community's usual e-mail.
+* **Quotas are Community's** (photo count and disk), counting uploads still in progress.
+* **No guests, no shared accounts.** Guests and *generic* accounts are refused even
+  where Community grants "any visitor" upload rights.
+* **No privacy level and no update mode**: those stay with administrators.
+* **No duplicate linking.** Piwigo's duplicate detection (MD5 of the whole file
+  against every photo's `md5sum`) would put an existing photo into the user's album
+  instead of storing the upload, bypassing moderation. Community users' uploads are
+  always stored as a new photo and moderated.
+* **Per-user limits** (settings): max file size, uploads in progress at once (others
+  wait their turn), disk held by unfinished uploads, and parallel connections.
+
 ## Choosing an album
 
 The uploader uses Piwigo's own album picker, the same modal as the core Web Form:

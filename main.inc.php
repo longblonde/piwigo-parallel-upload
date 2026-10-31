@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Parallel Upload
-Version: 1.5.3
+Version: 1.6.0
 Description: Upload large files in parallel chunks sized to fit under a reverse-proxy request cap (Cloudflare Tunnel: 100 MB), with a live per-file / per-chunk progress dashboard and time remaining.
 Plugin URI: https://gray-think.com
 Author: Gray-Think (Daniel Wald)
@@ -77,4 +77,83 @@ function pu_redirect_web_form()
     $url .= '&album='.$_GET['album'];
   }
   redirect($url);
+}
+
+// ---------------------------------------------------------------------------
+// Community users: public uploader at index.php?/parallel_upload
+// ---------------------------------------------------------------------------
+
+function pu_public_url($category_id = null)
+{
+  $u = make_index_url(array('section' => 'parallel_upload'));
+  if ($category_id) $u .= (strpos($u, '?') === false ? '?' : '&').'category_id='.(int)$category_id;
+  return $u;
+}
+
+/** Tabs shown on Community's upload page and on ours ("tab" mode). */
+function pu_public_tabs($active)
+{
+  load_language('plugin.lang', PU_PATH);
+  $cat = (isset($_GET['category_id']) && ctype_digit((string)$_GET['category_id'])) ? (int)$_GET['category_id'] : null;
+  $community_url = make_index_url(array('section' => 'add_photos')).($cat ? '&amp;category_id='.$cat : '');
+  return array(
+    array('label' => l10n('Upload Photos'), 'url' => $community_url, 'active' => $active == 'community'),
+    array('label' => l10n('Parallel Upload'), 'url' => str_replace('&', '&amp;', pu_public_url($cat)), 'active' => $active == 'parallel'),
+  );
+}
+
+add_event_handler('loc_end_section_init', 'pu_public_section_init');
+function pu_public_section_init()
+{
+  global $tokens, $page;
+  if (isset($tokens[0]) && $tokens[0] == 'parallel_upload')
+  {
+    $page['section'] = 'parallel_upload';
+    $page['is_homepage'] = false;
+  }
+}
+
+add_event_handler('loc_end_index', 'pu_public_index');
+function pu_public_index()
+{
+  global $page;
+  if (isset($page['section']) && $page['section'] == 'parallel_upload')
+  {
+    if (pu_community_mode() == 'off' && !is_admin()) redirect(make_index_url());
+    include(PU_PATH.'include/public_upload.inc.php');
+  }
+}
+
+// Community's own upload page: a tab to ours ("tab"), or a redirect to ours ("replace").
+// Runs before Community renders the page (its handler has the default priority).
+add_event_handler('loc_end_index', 'pu_community_page', EVENT_HANDLER_PRIORITY_NEUTRAL - 5);
+function pu_community_page()
+{
+  global $page, $template;
+  if (!isset($page['section']) || $page['section'] != 'add_photos') return;
+  $mode = pu_community_mode();
+  if ($mode == 'off') return;
+
+  $cat = (isset($_GET['category_id']) && ctype_digit((string)$_GET['category_id'])) ? (int)$_GET['category_id'] : null;
+
+  if ($mode == 'replace')
+  {
+    // everyone goes to Parallel Upload, which only serves registered users:
+    // in this mode guests can no longer upload through Community either
+    redirect(pu_public_url($cat));
+  }
+
+  if (pu_access_kind() !== 'community') return;   // guests/admins: Community's page unchanged
+  $template->assign(array(
+    'PU_TABS'     => pu_public_tabs('community'),
+    'PU_CSS_PATH' => get_root_url().'plugins/'.PU_ID.'/css/parallel_upload.css',
+  ));
+  $template->set_prefilter('add_photos', 'pu_community_tabs_prefilter');
+}
+
+function pu_community_tabs_prefilter($source, $smarty)
+{
+  return '{combine_css path=$PU_CSS_PATH order=100}'
+    .'{if !empty($PU_TABS)}<nav class="pu-tabs">{foreach from=$PU_TABS item=t}<a href="{$t.url}"{if $t.active} class="active" aria-current="page"{/if}>{$t.label}</a>{/foreach}</nav>{/if}'
+    ."\n".$source;
 }

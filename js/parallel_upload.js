@@ -21,6 +21,19 @@
   if (!app) return;
 
   const $ = (id) => document.getElementById(id);
+
+  // Public themes vary and don't all say whether they are dark: follow the page's real background.
+  if (app.classList.contains('pu-public')) {
+    let el = app.parentElement, bg = '';
+    while (el) {
+      const c = getComputedStyle(el).backgroundColor;
+      if (c && c !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(c)) { bg = c; break; }
+      el = el.parentElement;
+    }
+    // nothing painted anywhere: the browser's default white
+    const m = (bg || '').match(/\d+(\.\d+)?/g);
+    if (m && m.length >= 3 && (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) < 128) app.classList.add('pu-dark');
+  }
   const ds = app.dataset;
   const CFG = {
     token: ds.token,
@@ -37,6 +50,8 @@
     exts: ds.exts.split(',').filter(Boolean),
     maxFile: (parseInt(ds.maxfile, 10) || 0) * 1024 * 1024,
     batchUrl: ds.batchUrl,
+    community: ds.mode === 'community',   // public page for Community users
+    maxOpen: parseInt(ds.maxOpen, 10) || 0, // server limit on one user's uploads in progress
     strLeave: ds.strLeave,
     stallMs: 90 * 1000,        // no upload progress for this long => abort & retry chunk
     lookahead: 2,              // files opened beyond "concurrency" ahead of time
@@ -169,7 +184,8 @@
       if (f.open) openFiles++;
 
       if (f.state === 'queued') {
-        if (openFiles >= CFG.concurrency + CFG.lookahead) return null;
+        const cap = CFG.maxOpen ? Math.min(CFG.maxOpen, CFG.concurrency + CFG.lookahead) : CFG.concurrency + CFG.lookahead;
+        if (openFiles >= cap) return null;
         f.state = 'init'; openFiles++;
         return () => initJob(f);
       }
@@ -219,16 +235,23 @@
   async function initJob(f) {
     f.initAttempts++;
     try {
-      const r = await ws('pu.upload.init', {
-        name: f.name, size: f.size, chunk_size: f.chunkSize,
-        category: albumId(), level: $('pu-level').value,
-        update_mode: $('pu-update').checked ? 'true' : 'false',
-      });
+      const p = { name: f.name, size: f.size, chunk_size: f.chunkSize, category: albumId() };
+      // admins only: Community users get Community's moderation level and can't replace photos
+      if ($('pu-level')) p.level = $('pu-level').value;
+      if ($('pu-update')) p.update_mode = $('pu-update').checked ? 'true' : 'false';
+      const r = await ws('pu.upload.init', p);
       if (f.state !== 'init') { ws('pu.upload.abort', { upload_id: r.upload_id }).catch(() => {}); return; }
       f.uploadId = r.upload_id;
       f.state = 'uploading';
       f.lastT = performance.now();
     } catch (e) {
+      if (e.code === 429) {
+        // the server's per-user limit on uploads in progress: wait for one to finish
+        f.initAttempts--;
+        f.state = 'retry-init'; f.err = e.message || 'Waiting for another upload to finish';
+        setTimeout(() => { if (f.state === 'retry-init') { f.state = 'queued'; f.err = ''; pump(); } }, 4000);
+        return;
+      }
       if (e.retryable && f.initAttempts <= CFG.retries + 1) {
         f.state = 'retry-init';
         f.err = e.message + ' — retrying';
@@ -391,6 +414,8 @@
 
     if (S.uploaded.length && S.category) {
       ws('pwg.images.uploadCompleted', { image_id: S.uploaded.join(','), category_id: S.category.id }).catch(() => {});
+      // Community: tell the admins (its usual e-mail), same call as Community's own uploader
+      if (CFG.community) ws('community.images.uploadCompleted', { image_id: S.uploaded.join(','), category_id: S.category.id }).catch(() => {});
     }
     showResults();
     render(true);
@@ -398,11 +423,14 @@
 
   // ------------------------------------------------------------------ controls
   function albumId() { return $('pu-album').value; }
+  function setOptionsDisabled(on) {
+    for (const id of ['pu-level', 'pu-update', 'pu-album-select', 'pu-new-album-toggle']) { const el = $(id); if (el) el.disabled = on; }
+  }
 
   function onLeave(e) { e.preventDefault(); e.returnValue = CFG.strLeave; return CFG.strLeave; }
 
   function start() {
-    if (!albumId()) { openAlbumPicker(); return; }
+    if (!albumId()) { openAlbumPicker(); return; }   // community: focuses the album list
     if (!files.some((f) => f.state === 'queued')) return;
     if (!S.running) {
       S.running = true; S.paused = false; S.cancelled = false;
@@ -410,7 +438,7 @@
       S.lastT = S.t0; S.lastSent = totals().sent; S.rateSamples = 0; S.rate = 0;
       window.addEventListener('beforeunload', onLeave);
     }
-    $('pu-level').disabled = $('pu-update').disabled = true;
+    setOptionsDisabled(true);
     app.classList.add('album-locked');      // no album change once files are on their way
     $('pu-results').hidden = true;
     pump();
@@ -639,7 +667,7 @@
     $('pu-pause').innerHTML = S.paused ? '<span class="icon-play"></span> Resume' : '<span class="icon-pause"></span> Pause';
     $('pu-cancel').hidden = !S.running;
     $('pu-clear').hidden = S.running;
-    if (!S.running) { $('pu-level').disabled = $('pu-update').disabled = false; app.classList.remove('album-locked'); }
+    if (!S.running) { setOptionsDisabled(false); app.classList.remove('album-locked'); }
 
     // rows
     for (const f of files) renderRow(f, force, warm);
@@ -667,7 +695,9 @@
       r.rate.textContent = `${live} connection${live === 1 ? '' : 's'}` + (f.rate > 0 && !S.paused ? ` · ${fmtBytes(f.rate)}/s` : '');
       r.eta.textContent = f.rate > 0 && warm && !S.paused ? `≈ ${fmtEta(remain / f.rate)} left` : '';
     } else if (f.state === 'done' && f.result) {
-      r.rate.innerHTML = `<a href="admin.php?page=photo-${f.result.image_id}" target="_blank">#${f.result.image_id}</a> ${f.result.add_status === 'update' ? '(updated)' : ''}`;
+      r.rate.innerHTML = CFG.community
+        ? (f.result.pending ? '<span class="pu-pending">awaiting approval</span>' : '<span class="pu-published">published</span>')
+        : `<a href="admin.php?page=photo-${f.result.image_id}" target="_blank">#${f.result.image_id}</a> ${f.result.add_status === 'update' ? '(updated)' : ''}`;
       r.eta.textContent = '';
     } else {
       r.rate.textContent = f.state === 'queued' ? `${f.doneChunks}/${f.n} chunks` : '';
@@ -703,9 +733,8 @@
   function flash(el) { el.classList.add('pu-flash'); setTimeout(() => el.classList.remove('pu-flash'), 900); }
 
   function addThumb(f, r) {
-    const a = document.createElement('a');
-    a.href = 'admin.php?page=photo-' + r.image_id;
-    a.target = '_blank';
+    const a = document.createElement(CFG.community ? 'span' : 'a');
+    if (!CFG.community) { a.href = 'admin.php?page=photo-' + r.image_id; a.target = '_blank'; }
     a.innerHTML = `<img src="${esc(r.square_src)}" alt="" title="${esc(r.name || f.name)}">`;
     $('pu-thumbs').prepend(a);
   }
@@ -720,10 +749,18 @@
     if (S.updated) parts.push(`${S.updated} updated`);
     if (dupes > 0) parts.push(`${dupes} duplicate${dupes > 1 ? 's' : ''} already in the gallery`);
     let title = parts.join(', ');
-    if (S.category) title += ` · album “${S.category.label.replace(/<[^>]+>/g, '')}” now has ${S.category.nb_photos} photos`;
+    if (CFG.community) {
+      const pending = files.filter((f) => f.state === 'done' && f.result && f.result.pending).length;
+      if (pending) title += ` · ${pending} awaiting approval by an administrator`;
+      if (S.category) title += ` · album “${S.category.label.replace(/<[^>]+>/g, '')}”`;
+    } else if (S.category) {
+      title += ` · album “${S.category.label.replace(/<[^>]+>/g, '')}” now has ${S.category.nb_photos} photos`;
+    }
     $('pu-results-title').textContent = title;
-    $('pu-batch').href = CFG.batchUrl + ids.join(',');
-    $('pu-batch').textContent = `Manage this set of ${ids.length} photo${ids.length > 1 ? 's' : ''}`;
+    if ($('pu-batch')) {
+      $('pu-batch').href = CFG.batchUrl + ids.join(',');
+      $('pu-batch').textContent = `Manage this set of ${ids.length} photo${ids.length > 1 ? 's' : ''}`;
+    }
     $('pu-results').hidden = false;
   }
 
@@ -796,75 +833,117 @@
   $('pu-cancel').addEventListener('click', cancel);
   $('pu-clear').addEventListener('click', clearList);
 
-  // ---------------------------------------------------------------- album picker (core AlbumSelector)
-  const names = (typeof pu_album_names === 'object' && pu_album_names) || {};
-
-  function setAlbum(id, name) {
-    id = id ? String(id) : '';
-    $('pu-album').value = id;
-    if (id) {
-      if (name) names[id] = name;
-      $('selectedAlbumName').textContent = names[id] || ('#' + id);
-      try { localStorage.setItem('pu.album', id); } catch (e) {}
+  // ---------------------------------------------------------------- album choice, Community users
+  // The list holds only albums Community lets this user upload to; the server checks again.
+  let openAlbumPicker;
+  const sel = $('pu-album-select');
+  if (sel) {
+    const setAlbum = (id) => {
+      $('pu-album').value = id || '';
+      try { if (id) localStorage.setItem('pu.c.album', id); } catch (e) {}
+      render(true);
+    };
+    if (!sel.value) {
+      try { const last = localStorage.getItem('pu.c.album'); if (last && sel.querySelector(`option[value="${CSS.escape(last)}"]`)) sel.value = last; } catch (e) {}
     }
-    $('selectedAlbum').hidden = !id;
-    $('addPhotosAS').hidden = !!id;
-    render(true);
-  }
+    setAlbum(sel.value);
+    sel.addEventListener('change', () => setAlbum(sel.value));
+    openAlbumPicker = () => { sel.focus(); flash(sel); };
 
-  // preselected (?album=ID) wins, else the album used last time
-  if (!$('pu-album').value) {
-    try {
-      const last = localStorage.getItem('pu.album');
-      if (last && names[last]) setAlbum(last);
-    } catch (e) {}
-  }
+    // new album, only where Community allows creating one
+    const tog = $('pu-new-album-toggle');
+    if (tog) {
+      tog.addEventListener('click', (e) => { e.preventDefault(); if (tog.disabled) return; $('pu-new-album').hidden = !$('pu-new-album').hidden; $('pu-new-name').focus(); });
+      $('pu-new-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('pu-new-create').click(); } });
+      $('pu-new-create').addEventListener('click', async () => {
+        const name = $('pu-new-name').value.trim();
+        const parent = $('pu-new-parent').value;
+        $('pu-new-err').textContent = '';
+        if (!name) { flash($('pu-new-name')); return; }
+        try {
+          const r = await ws('pwg.categories.add', { name, parent });
+          const parentLabel = parent !== '0' ? $('pu-new-parent').selectedOptions[0].textContent + ' / ' : '';
+          const o = document.createElement('option'); o.value = r.id; o.textContent = parentLabel + name;
+          sel.appendChild(o); sel.value = String(r.id); setAlbum(sel.value);
+          $('pu-new-name').value = ''; $('pu-new-album').hidden = true;
+        } catch (e) {
+          $('pu-new-err').textContent = e.message;
+        }
+      });
+    }
+  } else {
+    // ---------------------------------------------------------------- album picker (core AlbumSelector)
+    const names = (typeof pu_album_names === 'object' && pu_album_names) || {};
 
-  const ab = (typeof AlbumSelector === 'function') ? new AlbumSelector({
-    selectedCategoriesIds: $('pu-album').value ? [$('pu-album').value] : [],
-    adminMode: true,                               // search all albums + "create album" inside the modal
-    modalTitle: (typeof str_drop_album_ab !== 'undefined') ? str_drop_album_ab : '',
-    selectAlbum: ({ album, newSelectedAlbum }) => {
-      newSelectedAlbum();
-      // same text extraction as core's add_related_category()
-      let label = '';
-      if (album.full_name_with_admin_links) {
-        jQuery('<div>' + album.full_name_with_admin_links + '</div>').find('a').each(function () {
-          label += (label ? ' / ' : '') + jQuery(this).text();
-        });
+    function setAlbum(id, name) {
+      id = id ? String(id) : '';
+      $('pu-album').value = id;
+      if (id) {
+        if (name) names[id] = name;
+        $('selectedAlbumName').textContent = names[id] || ('#' + id);
+        try { localStorage.setItem('pu.album', id); } catch (e) {}
       }
-      const id = ab.get_selected_albums()[0] || album.id;
-      setAlbum(id, label || album.fullname || names[id] || album.name);
-    },
-  }) : null;
-
-  function openAlbumPicker() {
-    if (app.classList.contains('album-locked')) return;
-    if (ab) ab.open();
-  }
-  $('btnPhotosAS').addEventListener('click', openAlbumPicker);
-  $('selectedAlbumEdit').addEventListener('click', openAlbumPicker);
-
-  // ---------------------------------------------------------------- first album (gallery has none yet)
-  const firstModal = jQuery('#addFirstAlbum');
-  $('btnFirstAlbum').addEventListener('click', () => { $('inputFirstAlbum').value = ''; firstModal.fadeIn(); $('inputFirstAlbum').focus(); });
-  $('closeFirstAlbum').addEventListener('click', () => firstModal.fadeOut());
-  $('inputFirstAlbum').addEventListener('keyup', (e) => { if (e.key === 'Enter') $('btnAddFirstAlbum').click(); });
-  $('btnAddFirstAlbum').addEventListener('click', async () => {
-    const name = $('inputFirstAlbum').value.trim();
-    if (!name) { flash($('inputFirstAlbum')); return; }
-    try {
-      const r = await ws('pwg.categories.add', { name });
-      if (ab) ab.select_album(r.id);
-      setAlbum(r.id, name);
-      firstModal.hide();
-      $('pu-welcome').hidden = true;
-      $('pu-main').hidden = false;
-    } catch (e) {
-      alert(e.message);
+      $('selectedAlbum').hidden = !id;
+      $('addPhotosAS').hidden = !!id;
+      render(true);
     }
-  });
 
+    // preselected (?album=ID) wins, else the album used last time
+    if (!$('pu-album').value) {
+      try {
+        const last = localStorage.getItem('pu.album');
+        if (last && names[last]) setAlbum(last);
+      } catch (e) {}
+    }
+
+    const ab = (typeof AlbumSelector === 'function') ? new AlbumSelector({
+      selectedCategoriesIds: $('pu-album').value ? [$('pu-album').value] : [],
+      adminMode: true,                               // search all albums + "create album" inside the modal
+      modalTitle: (typeof str_drop_album_ab !== 'undefined') ? str_drop_album_ab : '',
+      selectAlbum: ({ album, newSelectedAlbum }) => {
+        newSelectedAlbum();
+        // same text extraction as core's add_related_category()
+        let label = '';
+        if (album.full_name_with_admin_links) {
+          jQuery('<div>' + album.full_name_with_admin_links + '</div>').find('a').each(function () {
+            label += (label ? ' / ' : '') + jQuery(this).text();
+          });
+        }
+        const id = ab.get_selected_albums()[0] || album.id;
+        setAlbum(id, label || album.fullname || names[id] || album.name);
+      },
+    }) : null;
+
+    openAlbumPicker = function () {
+      if (app.classList.contains('album-locked')) return;
+      if (ab) ab.open();
+    };
+    $('btnPhotosAS').addEventListener('click', openAlbumPicker);
+    $('selectedAlbumEdit').addEventListener('click', openAlbumPicker);
+
+    // ---------------------------------------------------------------- first album (gallery has none yet)
+    const firstModal = jQuery('#addFirstAlbum');
+    $('btnFirstAlbum').addEventListener('click', () => { $('inputFirstAlbum').value = ''; firstModal.fadeIn(); $('inputFirstAlbum').focus(); });
+    $('closeFirstAlbum').addEventListener('click', () => firstModal.fadeOut());
+    $('inputFirstAlbum').addEventListener('keyup', (e) => { if (e.key === 'Enter') $('btnAddFirstAlbum').click(); });
+    $('btnAddFirstAlbum').addEventListener('click', async () => {
+      const name = $('inputFirstAlbum').value.trim();
+      if (!name) { flash($('inputFirstAlbum')); return; }
+      try {
+        const r = await ws('pwg.categories.add', { name });
+        if (ab) ab.select_album(r.id);
+        setAlbum(r.id, name);
+        firstModal.hide();
+        $('pu-welcome').hidden = true;
+        $('pu-main').hidden = false;
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+
+
+
+  }
 
   setInterval(render, 250);
   render(true);

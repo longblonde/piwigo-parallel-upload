@@ -28,6 +28,12 @@ function pu_default_config()
     'replace_web_form'=> false,// hide core "Web Form" tab, Photos > Add opens Parallel Upload
     'speed_target_pct'=> 80,   // a user's stated upload speed is targeted at this percentage
     'proxy_limit_mb'  => 100,  // request-body limit of the proxy in front (Cloudflare Free/Pro: 100)
+    // ---- Community plugin users (registered, non-admin) ----
+    'community_mode'        => 'off', // off | tab (extra tab on Community's upload page) | replace (takes it over)
+    'community_max_file_mb' => 0,     // 0 = same as the gallery's upload_form_max_file_size
+    'community_max_open'    => 3,     // uploads one user may have in progress at once
+    'community_max_reserved_gb' => 20,// disk one user's unfinished uploads may hold
+    'community_concurrency' => 4,     // parallel connections for one Community user
   );
 }
 
@@ -407,4 +413,162 @@ function pu_fpm_info()
 function pu_fpm_needed($cfg)
 {
   return (int)$cfg['concurrency'] + 2;
+}
+
+// ===========================================================================
+// Community plugin integration
+// ===========================================================================
+
+/** Community is installed, active and the version we know (its permission + moderation tables). */
+function pu_community_available()
+{
+  return defined('COMMUNITY_PENDINGS_TABLE')
+    && defined('COMMUNITY_PERMISSIONS_TABLE')
+    && function_exists('community_get_user_permissions')
+    && function_exists('community_get_user_limits');
+}
+
+function pu_community_mode($cfg = null)
+{
+  if (!pu_community_available()) return 'off';
+  if ($cfg === null) $cfg = pu_get_config();
+  return in_array($cfg['community_mode'], array('tab', 'replace')) ? $cfg['community_mode'] : 'off';
+}
+
+/**
+ * Who is calling: 'admin', 'community' (a registered user Community lets upload
+ * somewhere) or null (nobody we serve).
+ *
+ * Guests and shared "generic" accounts are never let in, even when Community
+ * gives "any visitor" upload rights: big parallel uploads from anonymous
+ * visitors are an abuse risk this plugin doesn't take.
+ */
+function pu_access_kind()
+{
+  global $user;
+  if (is_admin()) return 'admin';
+  if (pu_community_mode() == 'off') return null;
+  if (is_a_guest() || $user['id'] == $GLOBALS['conf']['guest_id']) return null;
+  if (!is_autorize_status(ACCESS_CLASSIC)) return null;          // excludes guest and generic
+  $p = pu_community_perms();
+  return empty($p['community_enabled']) ? null : 'community';
+}
+
+function pu_community_perms()
+{
+  global $user;
+  if (!pu_community_available()) return array('community_enabled' => false, 'upload_categories' => array());
+  $p = community_get_user_permissions($user['id']);
+  $p['upload_categories'] = array_values(array_map('intval', (array)$p['upload_categories']));
+  $p['create_categories'] = array_values(array_map('intval', (array)$p['create_categories']));
+  return $p;
+}
+
+function pu_community_can_upload_to($category_id)
+{
+  $p = pu_community_perms();
+  return in_array((int)$category_id, $p['upload_categories'], true);
+}
+
+/** Largest single file a Community user may send, in bytes (0 = no limit). */
+function pu_community_max_file($cfg = null)
+{
+  global $conf;
+  if ($cfg === null) $cfg = pu_get_config();
+  $gallery = (int)$conf['upload_form_max_file_size'] * 1024 * 1024;
+  $own = (int)$cfg['community_max_file_mb'] * 1024 * 1024;
+  if ($own > 0 && ($gallery == 0 || $own < $gallery)) return $own;
+  return $gallery;
+}
+
+/** This user's unfinished uploads in the buffer: count and bytes they hold. */
+function pu_user_open_uploads($user_id, $except = null)
+{
+  $n = 0; $bytes = 0;
+  foreach (glob(pu_buffer_dir().'/pu_'.(int)$user_id.'_*', GLOB_ONLYDIR) ?: array() as $dir)
+  {
+    if ($except !== null && basename($dir) == $except) continue;
+    if (!file_exists($dir.'/data.part')) continue;      // finished or failed: holds nothing
+    $meta = @json_decode(@file_get_contents($dir.'/meta.json'), true);
+    if (!is_array($meta)) continue;
+    $n++;
+    $bytes += (int)$meta['size'];
+  }
+  return array($n, $bytes);
+}
+
+/**
+ * Community's photo-count and disk quotas, counting photos already in the
+ * gallery plus uploads still in progress. Returns an error message or null.
+ * $extra_bytes / $extra_photos: what the request is about to add.
+ */
+function pu_community_quota_error($perms, $user_id, $extra_bytes, $extra_photos, $except_upload = null)
+{
+  $usage = community_get_user_limits($user_id);       // nb_photos, storage (MB)
+  list($open_n, $open_bytes) = pu_user_open_uploads($user_id, $except_upload);
+
+  if ((int)$perms['nb_photos'] > 0 && $usage['nb_photos'] + $open_n + $extra_photos > (int)$perms['nb_photos'])
+  {
+    return sprintf(l10n('Maximum number of photos reached (%u)'), $perms['nb_photos']);
+  }
+  if ((int)$perms['storage'] > 0)
+  {
+    $mb = $usage['storage'] + ($open_bytes + $extra_bytes) / 1048576;
+    if ($mb > (int)$perms['storage'])
+    {
+      return sprintf(l10n('Disk usage quota reached (%uMB)'), $perms['storage']);
+    }
+  }
+  return null;
+}
+
+/**
+ * Community's moderation for a photo it did not see being uploaded.
+ * Same rule as Community's own uploader (community_sendResponse): the photo
+ * is held for approval unless one of the user's permissions on the path from
+ * the album up to the gallery root is unmoderated.
+ * Returns true when the photo is pending approval.
+ */
+function pu_community_moderate($image_id, $category_id)
+{
+  $perms = pu_community_perms();
+  $category_infos = get_cat_info($category_id);
+
+  $moderate = true;
+  if (count($perms['permission_ids']) > 0)
+  {
+    $rows = query2array('
+SELECT cp.category_id, c.uppercats
+  FROM '.COMMUNITY_PERMISSIONS_TABLE.' AS cp
+    LEFT JOIN '.CATEGORIES_TABLE.' AS c ON cp.category_id = c.id
+  WHERE cp.id IN ('.implode(',', array_map('intval', $perms['permission_ids'])).')
+    AND cp.moderated = \'false\'
+;');
+    foreach ($rows as $row)
+    {
+      if (empty($row['category_id'])) { $moderate = false; break; }
+      if (preg_match('/^'.preg_quote($row['uppercats'], '/').'(,|$)/', $category_infos['uppercats'])) { $moderate = false; break; }
+    }
+  }
+
+  $image = pwg_db_fetch_assoc(pwg_query('SELECT id, date_available FROM '.IMAGES_TABLE.' WHERE id = '.(int)$image_id.';'));
+  pwg_query('DELETE FROM '.COMMUNITY_PENDINGS_TABLE.' WHERE image_id = '.(int)$image_id.';');
+  single_insert(COMMUNITY_PENDINGS_TABLE, array(
+    'image_id' => (int)$image_id,
+    'added_on' => $image['date_available'],
+    'state'    => $moderate ? 'moderation_pending' : 'validated',
+  ));
+  pwg_query('UPDATE '.IMAGES_TABLE.' SET level = '.($moderate ? 16 : 0).' WHERE id = '.(int)$image_id.';');
+  invalidate_user_cache();
+  return $moderate;
+}
+
+/** Serialize one user's upload starts, so two of them can't both pass the limits. */
+function pu_user_lock($user_id)
+{
+  $dir = pu_buffer_dir();
+  if (!is_dir($dir)) @mkgetdir($dir, MKGETDIR_DEFAULT & ~MKGETDIR_DIE_ON_ERROR);
+  $fp = @fopen($dir.'/.user_'.(int)$user_id.'.lock', 'c');
+  if ($fp) flock($fp, LOCK_EX);
+  return $fp;
 }

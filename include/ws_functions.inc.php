@@ -12,14 +12,20 @@ defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
  *   pu.upload.status  upload_id   (poll this if finish got cut off by the proxy's 100 s timeout)
  *   pu.upload.abort   upload_id
  *
- * All methods: admin only, POST only, pwg_token required.
+ * All methods: POST only, pwg_token required, and the caller must be either an
+ * administrator or a registered (non-guest, non-generic) user whom the
+ * Community plugin lets upload, with Community support switched on in the
+ * settings. Community users are limited to their albums and quotas, can't
+ * pick privacy levels or replace photos, and their photos go through
+ * Community's moderation.
  */
 
 function pu_ws_add_methods($arr)
 {
   $service = &$arr[0];
   $f = PU_PATH.'include/ws_functions.inc.php';
-  $opt = array('admin_only' => true, 'post_only' => true);
+  // Access is checked inside each method (pu_ws_guard): admins, or Community users.
+  $opt = array('admin_only' => false, 'post_only' => true);
 
   $service->addMethod('pu.upload.init', 'pu_ws_init', array(
       'name'        => array(),
@@ -66,6 +72,18 @@ function pu_check_token($params)
   @ini_set('display_errors', '0');
   @ini_set('log_errors', '1');
   return get_pwg_token() == $params['pwg_token'];
+}
+
+/**
+ * Token + who may call. Returns 'admin' | 'community', or a PwgError.
+ * Guests get the same "not allowed" as anyone else; nothing is created for them.
+ */
+function pu_ws_guard($params)
+{
+  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_access_kind();
+  if ($kind === null) return new PwgError(401, 'Access denied');
+  return $kind;
 }
 
 /** @return array(dir, meta) or PwgError */
@@ -117,7 +135,10 @@ function pu_ws_init($params, $service)
 {
   global $conf, $user;
 
-  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_ws_guard($params);
+  if ($kind instanceof PwgError) return $kind;
+  $community = ($kind == 'community');
+  $cfg = pu_get_config();
 
   $name = trim(basename(str_replace('\\', '/', stripslashes($params['name']))));
   if ($name === '') return new PwgError(WS_ERR_INVALID_PARAM, 'Missing file name');
@@ -134,11 +155,10 @@ function pu_ws_init($params, $service)
   }
   $size = (int)$params['size'];
 
-  $max_file = (int)$conf['upload_form_max_file_size'] * 1024 * 1024;
+  $max_file = $community ? pu_community_max_file($cfg) : (int)$conf['upload_form_max_file_size'] * 1024 * 1024;
   if ($max_file > 0 && $size > $max_file)
   {
-    return new PwgError(413, sprintf(
-      '%s is larger than $conf[\'upload_form_max_file_size\'] (%d MB)', $name, $conf['upload_form_max_file_size']));
+    return new PwgError(413, sprintf('%s is larger than the %d MB limit per file', $name, round($max_file / 1048576)));
   }
 
   list($server_max, $why) = pu_server_max_chunk();
@@ -154,7 +174,18 @@ function pu_ws_init($params, $service)
   list($count) = pwg_db_fetch_row(pwg_query($query));
   if ($count == 0) return new PwgError(404, 'Album not found');
 
-  if (!in_array((int)$params['level'], $conf['available_permission_levels']))
+  if ($community)
+  {
+    // Community users: their albums only; no privacy level of their own (hidden
+    // until moderation decides), and no replacing existing photos.
+    if (!pu_community_can_upload_to($params['category']))
+    {
+      return new PwgError(403, 'You are not allowed to upload into this album');
+    }
+    $params['level'] = 16;
+    $params['update_mode'] = false;
+  }
+  elseif (!in_array((int)$params['level'], $conf['available_permission_levels']))
   {
     return new PwgError(WS_ERR_INVALID_PARAM, 'Invalid privacy level');
   }
@@ -171,6 +202,32 @@ function pu_ws_init($params, $service)
   if ($free !== false && $free < $size + 64 * 1024 * 1024)
   {
     return new PwgError(507, sprintf('Not enough free space in %s for %s', $base, $name));
+  }
+
+  // Per-user limits for Community users, checked under a per-user lock so two
+  // simultaneous starts can't both squeeze past them.
+  $ulock = null;
+  if ($community)
+  {
+    $ulock = pu_user_lock($user['id']);
+    list($open_n, $open_bytes) = pu_user_open_uploads($user['id']);
+    $max_open = max(1, (int)$cfg['community_max_open']);
+    $max_reserved = max(1, (float)$cfg['community_max_reserved_gb']) * 1e9;
+    if ($size > $max_reserved)
+    {
+      return new PwgError(413, sprintf('%s is larger than the %s GB allowed in progress per user', $name, $cfg['community_max_reserved_gb']));
+    }
+    // temporary: the browser waits and tries again when an upload finishes
+    if ($open_n >= $max_open)
+    {
+      return new PwgError(429, sprintf('Waiting: %d uploads already in progress (the limit per user)', $open_n));
+    }
+    if ($open_bytes + $size > $max_reserved)
+    {
+      return new PwgError(429, sprintf('Waiting: uploads in progress already hold %.1f of the %s GB allowed per user', $open_bytes / 1e9, $cfg['community_max_reserved_gb']));
+    }
+    $q = pu_community_quota_error(pu_community_perms(), $user['id'], $size, 1);
+    if ($q !== null) return new PwgError(403, $q);
   }
 
   $upload_id = 'pu_'.(int)$user['id'].'_'.bin2hex(random_bytes(12));
@@ -195,9 +252,11 @@ function pu_ws_init($params, $service)
     'category'    => (int)$params['category'],
     'level'       => (int)$params['level'],
     'update_mode' => (bool)$params['update_mode'],
+    'community'   => $community,
     'created'     => time(),
   );
   file_put_contents($dir.'/meta.json', json_encode($meta));
+  if ($ulock) { flock($ulock, LOCK_UN); fclose($ulock); }
 
   return array(
     'upload_id'  => $upload_id,
@@ -212,7 +271,8 @@ function pu_ws_init($params, $service)
 
 function pu_ws_chunk($params, $service)
 {
-  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_ws_guard($params);
+  if ($kind instanceof PwgError) return $kind;
 
   $r = pu_load($params['upload_id']);
   if ($r instanceof PwgError) return $r;
@@ -303,7 +363,8 @@ function pu_ws_chunk($params, $service)
 
 function pu_ws_finish($params, $service)
 {
-  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_ws_guard($params);
+  if ($kind instanceof PwgError) return $kind;
 
   $r = pu_load($params['upload_id']);
   if ($r instanceof PwgError) return $r;
@@ -347,6 +408,29 @@ function pu_ws_finish($params, $service)
   if (filesize($dir.'/data.part') != $meta['size'])
   {
     return new PwgError(500, 'Assembled size mismatch');
+  }
+
+  // Community users: rights and quotas may have changed since the upload began.
+  if (!empty($meta['community']))
+  {
+    global $user;
+    if ($kind != 'community' || !pu_community_can_upload_to($meta['category']))
+    {
+      file_put_contents($dir.'/result.json', json_encode(array('error' => 'You are no longer allowed to upload into this album', 'code' => 403)));
+      @unlink($dir.'/data.part');
+      return new PwgError(403, 'You are no longer allowed to upload into this album');
+    }
+    $q = pu_community_quota_error(pu_community_perms(), $user['id'], $meta['size'], 1, basename($dir));
+    if ($q !== null)
+    {
+      file_put_contents($dir.'/result.json', json_encode(array('error' => $q, 'code' => 403)));
+      @unlink($dir.'/data.part');
+      return new PwgError(403, $q);
+    }
+  }
+  elseif ($kind != 'admin')
+  {
+    return new PwgError(401, 'Access denied');
   }
 
   touch($dir.'/finishing');
@@ -438,6 +522,16 @@ SELECT i.id
   // This request only carries upload_id, so expose the album the same way.
   $_REQUEST['category'] = $_POST['category'] = array($category);
 
+  // Duplicate detection links an existing photo (same MD5) into the album
+  // instead of storing the upload. For Community users that would let anyone
+  // holding a copy of a private photo place it in an album they can upload to,
+  // without moderation. Their uploads are always stored as a new photo, which
+  // then goes through moderation like any other.
+  global $conf;
+  $community = !empty($meta['community']);
+  $saved_dup = isset($conf['upload_detect_duplicate']) ? $conf['upload_detect_duplicate'] : null;
+  if ($community) $conf['upload_detect_duplicate'] = false;
+
   $image_id = add_uploaded_file(
     $dir.'/data.part',
     $name,
@@ -446,7 +540,15 @@ SELECT i.id
     $id_image
   );
 
+  if ($community) $conf['upload_detect_duplicate'] = $saved_dup;
+
   if (empty($image_id)) return new PwgError(500, 'add_uploaded_file failed');
+
+  $pending = false;
+  if ($community)
+  {
+    $pending = pu_community_moderate($image_id, $category);
+  }
 
   $image_infos = pwg_db_fetch_assoc(pwg_query('
 SELECT id, name, representative_ext, path
@@ -474,6 +576,7 @@ SELECT COUNT(*) FROM '.LOUNGE_TABLE.'
       'label'     => get_cat_display_name_from_id($category, null),
     ),
     'add_status' => $add_status,
+    'pending'    => $pending,
   );
 }
 
@@ -498,7 +601,8 @@ function pu_finisher_alive($dir)
 
 function pu_ws_status($params, $service)
 {
-  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_ws_guard($params);
+  if ($kind instanceof PwgError) return $kind;
 
   $r = pu_load($params['upload_id']);
   if ($r instanceof PwgError) return $r;
@@ -528,7 +632,8 @@ function pu_ws_status($params, $service)
 
 function pu_ws_abort($params, $service)
 {
-  if (!pu_check_token($params)) return new PwgError(403, 'Invalid security token');
+  $kind = pu_ws_guard($params);
+  if ($kind instanceof PwgError) return $kind;
 
   $r = pu_load($params['upload_id']);
   if ($r instanceof PwgError) return $r;

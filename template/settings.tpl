@@ -63,6 +63,39 @@
         </label>
       </div>
 
+      <fieldset class="pu-community">
+        <legend>{'Community users'|translate}</legend>
+        {if !$PU_COMMUNITY_AVAILABLE}
+          <p class="pu-dim-note">{'The Community plugin is not active, so only administrators can use Parallel Upload. Activate Community to let registered users upload with it.'|translate}</p>
+          <input type="hidden" name="community_mode" value="{$PU_CFG.community_mode}">
+        {else}
+          <p class="pu-dim-note">{'Registered users whom Community lets upload can use Parallel Upload from the public "Upload Photos" page, with Community\'s albums, quotas and moderation. Guests and shared (generic) accounts are never allowed, even where Community permits "any visitor".'|translate}</p>
+          <div class="pu-radio">
+            <label><input type="radio" name="community_mode" value="off" {if $PU_CFG.community_mode == 'off'}checked{/if}> {'Off'|translate} <small>{'Administrators only'|translate}</small></label>
+            <label><input type="radio" name="community_mode" value="tab" {if $PU_CFG.community_mode == 'tab'}checked{/if}> {'Add a "Parallel Upload" tab'|translate} <small>{'next to Community\'s own uploader'|translate}</small></label>
+            <label><input type="radio" name="community_mode" value="replace" {if $PU_CFG.community_mode == 'replace'}checked{/if}> {'Replace Community\'s uploader'|translate} <small>{'its "Upload Photos" link opens Parallel Upload'|translate}</small></label>
+          </div>
+          <div class="pu-grid">
+            <label>{'Max file size for Community users'|translate} (MB)
+              <input type="number" name="community_max_file_mb" min="0" max="1000000" value="{$PU_CFG.community_max_file_mb}">
+              <small>{'0 = the gallery limit (%d MB).'|translate|sprintf:$PU_GALLERY_MAX_MB}</small>
+            </label>
+            <label>{'Uploads in progress per user'|translate}
+              <input type="number" name="community_max_open" min="1" max="20" value="{$PU_CFG.community_max_open}">
+              <small>{'Further files wait their turn.'|translate}</small>
+            </label>
+            <label>{'Disk held by one user\'s unfinished uploads'|translate} (GB)
+              <input type="number" name="community_max_reserved_gb" min="1" max="10000" value="{$PU_CFG.community_max_reserved_gb}">
+              <small>{'Space is set aside when an upload starts. Abandoned uploads are purged after the time above.'|translate}</small>
+            </label>
+            <label>{'Parallel connections per Community user'|translate}
+              <input type="number" name="community_concurrency" min="1" max="{$PU_CONC.input_max}" value="{$PU_CFG.community_concurrency}">
+              <small>{'Never more than Max parallel connections above.'|translate}</small>
+            </label>
+          </div>
+        {/if}
+      </fieldset>
+
       <table class="pu-ini">
         <tr><th>upload_max_filesize</th><td>{$PU_INI.upload_max_filesize}</td>
             <th>post_max_size</th><td>{$PU_INI.post_max_size}</td></tr>

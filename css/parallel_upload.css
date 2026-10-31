@@ -224,3 +224,35 @@
 
 .pu-f-retry { flex: none; border: 1px solid var(--pu-line); background: var(--pu-bg2); color: var(--pu-text); font-size: 11px; border-radius: 10px; padding: 1px 8px; cursor: pointer; }
 .pu-f-retry:hover { border-color: var(--pu-accent); color: var(--pu-accent); }
+
+/* ---------------------------------------------------- settings: Community */
+.pu-community { border: 1px solid var(--pu-line); border-radius: var(--pu-radius); padding: 10px 16px 16px; margin: 18px 0 4px; }
+.pu-community legend { font-weight: 700; padding: 0 6px; }
+.pu-dim-note { color: var(--pu-dim); font-size: 12px; margin: 4px 0 12px; max-width: 900px; }
+.pu-radio { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.pu-radio label { display: flex; align-items: baseline; gap: 6px; font-weight: 600; }
+.pu-radio small { color: var(--pu-dim); font-weight: 400; }
+
+/* ---------------------------------------------------- public side (Community users) */
+.pu-tabs { display: flex; gap: 4px; max-width: 1200px; margin: 14px auto 0; padding: 0 16px; box-sizing: border-box; border-bottom: 1px solid rgba(127,127,127,.35); }
+.pu-tabs a { padding: 8px 16px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; text-decoration: none; opacity: .75; margin-bottom: -1px; }
+.pu-tabs a:hover { opacity: 1; }
+.pu-tabs a.active { opacity: 1; font-weight: 700; border-color: rgba(127,127,127,.35); background: rgba(127,127,127,.08); border-bottom: 1px solid transparent; }
+.pu.pu-public { margin-top: 16px; }
+.pu.pu-public .buttonLike {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; border: 0; cursor: pointer;
+  background: var(--pu-accent); color: #fff; font-weight: 600; font-size: 13px; text-decoration: none; line-height: 1.2;
+}
+.pu.pu-public .buttonLike:hover { filter: brightness(1.08); }
+.pu.pu-public select, .pu.pu-public input[type=text], .pu.pu-public input[type=number] {
+  padding: 6px 8px; border: 1px solid var(--pu-line); border-radius: 6px; background: var(--pu-bg); color: var(--pu-text); font: inherit;
+}
+.pu.pu-public #pu-album-select { width: 100%; max-width: 100%; }
+.pu .pu-link { background: none; border: 0; padding: 0; color: var(--pu-accent); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.pu .pu-link[disabled] { opacity: .4; cursor: default; }
+.pu-new-album { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.pu-new-album select { max-width: 240px; }
+.pu-new-album input { flex: 1 1 160px; min-width: 0; }
+.pu-pending { color: var(--pu-retry); font-weight: 600; }
+.pu-published { color: var(--pu-done); font-weight: 600; }
+.pu-dark .pu-pending { color: #f0d58a; }

@@ -1,13 +1,24 @@
 {combine_css path=$PU_PATH|cat:'css/parallel_upload.css' order=100}
+{if $PU_MODE == 'community'}
+{combine_script id='pu.uploader' load='footer' require='jquery' path=$PU_PATH|cat:'js/parallel_upload.js'}
+{else}
 {* core album picker (same modal as Photos > Add > Web Form) *}
 {include file='include/album_selector.inc.tpl'}
 {combine_script id='pu.uploader' load='footer' require='albumSelector' path=$PU_PATH|cat:'js/parallel_upload.js'}
+{/if}
 {footer_script}
 const pu_album_names = {$PU_ALBUM_NAMES|json_encode};
 const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
 {/footer_script}
 
-<div id="pu-app" class="pu{if $themeconf.colorscheme == 'dark'} pu-dark{/if}"
+{if $PU_MODE == 'community' && !empty($PU_TABS)}
+<nav class="pu-tabs">
+  {foreach from=$PU_TABS item=t}<a href="{$t.url}"{if $t.active} class="active" aria-current="page"{/if}>{$t.label}</a>{/foreach}
+</nav>
+{/if}
+<div id="pu-app" class="pu{if $PU_MODE != 'community' && $themeconf.colorscheme == 'dark'} pu-dark{/if}{if $PU_MODE == 'community'} pu-public{/if}"
+  data-mode="{$PU_MODE}"
+  data-max-open="{$PU_MAX_OPEN}"
   data-token="{$PU_TOKEN}"
   data-chunk="{$PU_CHUNK}"
   data-concurrency="{$PU_MAX_CONC}"
@@ -26,16 +37,42 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
     <div class="pu-warn"><span class="icon-attention"></span> {$w}</div>
   {/foreach}
 
+  {if $PU_MODE != 'community'}
   {* ------------------------------------------------------------ no album yet: same welcome as the core Web Form *}
   <div class="pu-welcome" id="pu-welcome"{if $PU_NB_ALBUMS > 0} hidden{/if}>
     <div class="addAlbumEmptyTitle">{'Welcome!'|translate}</div>
     <p class="addAlbumEmptyInfos">{'Piwigo requires an album to add photos.'|translate}</p>
     <a class="buttonLike" id="btnFirstAlbum">{'Create a first album'|translate}</a>
   </div>
+  {/if}
 
-  <div id="pu-main"{if $PU_NB_ALBUMS == 0} hidden{/if}>
+  <div id="pu-main"{if $PU_MODE != 'community' && $PU_NB_ALBUMS == 0} hidden{/if}>
   {* ------------------------------------------------------------ destination *}
   <section class="pu-card pu-setup">
+    {if $PU_MODE == 'community'}
+    <div class="pu-field">
+      <label for="pu-album-select">{'Drop into album'|translate}</label>
+      <input type="hidden" id="pu-album" value="{$PU_ALBUM_ID}">
+      <select id="pu-album-select">
+        <option value="">— {'Select an album'|translate} —</option>
+        {html_options options=$PU_ALBUM_OPTIONS selected=$PU_ALBUM_ID}
+      </select>
+      {if $PU_CAN_CREATE}
+      <button type="button" class="pu-link" id="pu-new-album-toggle">+ {'create a new album'|translate}</button>
+      <div class="pu-new-album" id="pu-new-album" hidden>
+        <select id="pu-new-parent">
+          {if $PU_CREATE_TOP}<option value="0">— {'top level'|translate} —</option>{/if}
+          {html_options options=$PU_PARENT_OPTIONS}
+        </select>
+        <input type="text" id="pu-new-name" maxlength="255" placeholder="{'Album name'|translate}">
+        <button type="button" class="buttonLike" id="pu-new-create">{'Create'|translate}</button>
+        <span class="pu-err" id="pu-new-err"></span>
+      </div>
+      {/if}
+      {if !empty($PU_QUOTA)}<small>{$PU_QUOTA}</small>{/if}
+      {if !empty($PU_MODERATED_NOTE)}<small>{$PU_MODERATED_NOTE}</small>{/if}
+    </div>
+    {else}
     <div class="pu-field">
       <label>{'Drop into album'|translate}</label>
       <input type="hidden" id="pu-album" value="{$PU_ALBUM_ID}">
@@ -55,6 +92,7 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
       <label class="pu-check"><input type="checkbox" id="pu-update"> {'Update mode'|translate}</label>
       <small>{'Replace photos with the same file name in this album'|translate}</small>
     </div>
+    {/if}
     <div class="pu-field pu-field-sm pu-plan">
       <label for="pu-mbps">{'Your upload speed'|translate}</label>
       <div class="pu-speed"><input type="number" id="pu-mbps" min="1" max="100000" step="any" placeholder="{'auto'|translate}"> <span>Mbps</span></div>
@@ -118,11 +156,12 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
   <section class="pu-card pu-results" id="pu-results" hidden>
     <h3 id="pu-results-title"></h3>
     <div class="pu-thumbs" id="pu-thumbs"></div>
-    <p><a class="buttonLike" id="pu-batch" href="#">{'Manage this set of photos'|translate}</a></p>
+    {if $PU_MODE != 'community'}<p><a class="buttonLike" id="pu-batch" href="#">{'Manage this set of photos'|translate}</a></p>{/if}
   </section>
 
   </div>{* pu-main *}
 
+  {if $PU_MODE != 'community'}
   {* ------------------------------------------------------------ first album modal (core markup) *}
   <div class="bg-modal" id="addFirstAlbum">
     <div class="new-album-modal-content">
@@ -137,4 +176,5 @@ const str_drop_album_ab = '{'Drop into album'|@translate|escape:javascript}';
       <a class="buttonLike icon-plus" id="btnAddFirstAlbum">{'Create and select'|translate}</a>
     </div>
   </div>
+  {/if}
 </div>
